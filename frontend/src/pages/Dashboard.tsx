@@ -2,13 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { TrendingUp, Users, Calendar, Scissors, CheckCircle2, Clock, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import axios from 'axios';
 
 const Dashboard: React.FC = () => {
   const [agendamentos, setAgendamentos] = useState<any[]>([]);
   const [profissionais, setProfissionais] = useState<any[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
   const [clientes, setClientes] = useState<any[]>([]);
+  const [receitas, setReceitas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [empresaBloqueada, setEmpresaBloqueada] = useState(false);
 
   // FILTROS
   const [dataInicio, setDataInicio] = useState('');
@@ -20,50 +23,114 @@ const Dashboard: React.FC = () => {
   const [novoStatus, setNovoStatus] = useState('');
 
   useEffect(() => {
-    fetchData();
+    verificarEmpresaAtiva();
   }, []);
 
-  const fetchData = async () => {
+  // ✅ VERIFICAR SE EMPRESA ESTÁ ATIVA
+  const verificarEmpresaAtiva = async () => {
     try {
       setLoading(true);
+      const companyId = localStorage.getItem('companyId');
 
-      // Buscar agendamentos
-      const { data: agendamentosData, error: agendamentosError } = await supabase
-        .from('agendamentos')
-        .select('*');
+      if (!companyId) {
+        console.error('❌ Company ID não encontrado');
+        window.location.href = '/login';
+        return;
+      }
 
-      // Buscar profissionais
-      const { data: profissionaisData, error: profissionaisError } = await supabase
-        .from('profissionais')
-        .select('*');
+      console.log('🔍 Verificando se empresa está ativa:', companyId);
 
-      // Buscar serviços
-      const { data: servicosData, error: servicosError } = await supabase
-        .from('servicos')
-        .select('*');
+      // ✅ CHAMAR ROTA DE VERIFICAÇÃO DO BACKEND
+      const resposta = await axios.get(
+        `http://localhost:3001/verify-company/${companyId}`
+      );
 
-      // Buscar clientes
-      const { data: clientesData, error: clientesError } = await supabase
-        .from('clientes')
-        .select('*');
+      if (!resposta.data.ativa) {
+        console.error('❌ Empresa bloqueada ou inativa');
+        setEmpresaBloqueada(true);
+        return;
+      }
 
-      if (!agendamentosError) setAgendamentos(agendamentosData || []);
-      if (!profissionaisError) setProfissionais(profissionaisData || []);
-      if (!servicosError) setServicos(servicosData || []);
-      if (!clientesError) setClientes(clientesData || []);
-
-      console.log('Dados carregados:', { agendamentosData, profissionaisData, servicosData, clientesData });
-    } catch (error) {
-      console.error('Erro ao buscar dados:', error);
+      console.log('✅ Empresa está ativa! Carregando dados...');
+      await fetchData();
+    } catch (error: any) {
+      if (error.response?.status === 403) {
+        console.error('❌ Empresa foi bloqueada pelo Super Admin');
+        setEmpresaBloqueada(true);
+      } else {
+        console.error('❌ Erro ao verificar empresa:', error);
+        setEmpresaBloqueada(true);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // APLICAR FILTROS - MOSTRAR APENAS CONFIRMADOS
+  const fetchData = async () => {
+    try {
+      // ✅ PEGAR COMPANY_ID DO LOCALSTORAGE
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        console.error('❌ Company ID não encontrado. Usuário não autenticado corretamente.');
+        return;
+      }
+
+      console.log('🔍 Buscando dados para company_id:', companyId);
+
+      // ✅ BUSCAR AGENDAMENTOS FILTRANDO POR COMPANY_ID
+      const { data: agendamentosData, error: agendamentosError } = await supabase
+        .from('agendamentos')
+        .select('*')
+        .eq('company_id', companyId);
+
+      // ✅ BUSCAR PROFISSIONAIS FILTRANDO POR COMPANY_ID
+      const { data: profissionaisData, error: profissionaisError } = await supabase
+        .from('profissionais')
+        .select('*')
+        .eq('company_id', companyId);
+
+      // ✅ BUSCAR SERVIÇOS FILTRANDO POR COMPANY_ID
+      const { data: servicosData, error: servicosError } = await supabase
+        .from('servicos')
+        .select('*')
+        .eq('company_id', companyId);
+
+      // ✅ BUSCAR CLIENTES FILTRANDO POR COMPANY_ID
+      const { data: clientesData, error: clientesError } = await supabase
+        .from('clientes')
+        .select('*')
+        .eq('company_id', companyId);
+
+      // ✅ BUSCAR RECEITAS DO FINANCEIRO FILTRANDO POR COMPANY_ID
+      const { data: receitasData, error: receitasError } = await supabase
+        .from('financeiro')
+        .select('*')
+        .eq('company_id', companyId)
+        .eq('tipo', 'receita');
+
+      if (!agendamentosError) setAgendamentos(agendamentosData || []);
+      if (!profissionaisError) setProfissionais(profissionaisData || []);
+      if (!servicosError) setServicos(servicosData || []);
+      if (!clientesError) setClientes(clientesData || []);
+      if (!receitasError) setReceitas(receitasData || []);
+
+      console.log('✅ Dados carregados:', {
+        agendamentos: agendamentosData?.length || 0,
+        profissionais: profissionaisData?.length || 0,
+        servicos: servicosData?.length || 0,
+        clientes: clientesData?.length || 0,
+        receitas: receitasData?.length || 0
+      });
+    } catch (error) {
+      console.error('❌ Erro ao buscar dados:', error);
+    }
+  };
+
+  // ✅ APLICAR FILTROS - MOSTRAR APENAS CONFIRMADOS
   const agendamentosFiltrados = useMemo(() => {
     return agendamentos
-      .filter(apt => apt.status === 'finalizado' || apt.status === 'confirmed') // APENAS CONFIRMADOS
+      .filter(apt => apt.status === 'confirmado' || apt.status === 'confirmed') // APENAS CONFIRMADOS
       .filter(apt => {
         // Filtro por profissional
         if (profissionalFiltro && apt.profissional_id !== profissionalFiltro) {
@@ -82,14 +149,30 @@ const Dashboard: React.FC = () => {
       });
   }, [agendamentos, profissionalFiltro, dataInicio, dataFim]);
 
-  // CALCULAR FATURAMENTO POR PROFISSIONAL
+  // ✅ FILTRAR RECEITAS POR PERÍODO
+  const receitasFiltradas = useMemo(() => {
+    return receitas.filter(receita => {
+      if (dataInicio && receita.data_transacao < dataInicio + 'T00:00:00') {
+        return false;
+      }
+      if (dataFim && receita.data_transacao > dataFim + 'T23:59:59') {
+        return false;
+      }
+      return true;
+    });
+  }, [receitas, dataInicio, dataFim]);
+
+  // ✅ CALCULAR FATURAMENTO POR PROFISSIONAL (USANDO RECEITAS)
   const faturamentoPorProfissional = useMemo(() => {
     const faturamento: { [key: string]: { nome: string; total: number; quantidade: number } } = {};
 
-    agendamentosFiltrados.forEach(apt => {
-      const profId = apt.profissional_id;
-      const servico = servicos.find(s => s.id === apt.servico_id);
-      const valor = servico?.preco || 0;
+    receitasFiltradas.forEach(receita => {
+      // Buscar agendamento vinculado
+      const agendamento = agendamentos.find(a => a.id === receita.agendamento_id);
+      if (!agendamento) return;
+
+      const profId = agendamento.profissional_id;
+      const valor = receita.valor;
 
       if (!faturamento[profId]) {
         const prof = profissionais.find(p => p.id === profId);
@@ -105,24 +188,22 @@ const Dashboard: React.FC = () => {
     });
 
     return faturamento;
-  }, [agendamentosFiltrados, servicos, profissionais]);
+  }, [receitasFiltradas, agendamentos, profissionais]);
 
+  // ✅ CALCULAR ESTATÍSTICAS (USANDO RECEITAS DO FINANCEIRO)
   const stats = useMemo(() => {
-    const totalFaturamento = agendamentosFiltrados.reduce((sum, apt) => {
-      const servico = servicos.find(s => s.id === apt.servico_id);
-      return sum + (servico?.preco || 0);
-    }, 0);
-
-    const confirmed = agendamentosFiltrados.filter(a => a.status === 'finalizado' || a.status === 'confirmed').length;
+    const totalFaturamento = receitasFiltradas.reduce((sum, r) => sum + (r.valor || 0), 0);
+    const confirmed = agendamentosFiltrados.length;
 
     return [
       { label: 'Faturamento', value: `R$ ${totalFaturamento.toFixed(2)}`, icon: <TrendingUp className="text-green-500" />, detail: 'Total de receita' },
-      { label: 'Agendamentos', value: agendamentosFiltrados.length, icon: <Calendar className="text-blue-500" />, detail: 'finalizado' },
-      { label: 'Profissionais', value: profissionais.length, icon: <Users className="text-purple-500" />, detail: 'Equipe ativa' },
-      { label: 'Serviços', value: servicos.length, icon: <Scissors className="text-orange-500" />, detail: 'Catálogo' },
+      { label: 'Agendamentos', value: confirmed, icon: <Calendar className="text-blue-500" />, detail: 'confirmado' },
+      { label: 'Profissionais', value: profissionais.filter(p => p.ativo !== false).length, icon: <Users className="text-purple-500" />, detail: 'Equipe ativa' },
+      { label: 'Serviços', value: servicos.filter(s => s.ativo !== false).length, icon: <Scissors className="text-orange-500" />, detail: 'Catálogo' },
     ];
-  }, [agendamentosFiltrados, servicos, profissionais]);
+  }, [receitasFiltradas, agendamentosFiltrados, profissionais, servicos]);
 
+  // ✅ GRÁFICO BASEADO EM RECEITAS
   const chartData = useMemo(() => {
     // Se tem filtro de período, mostrar dias do período
     if (dataInicio && dataFim) {
@@ -138,7 +219,7 @@ const Dashboard: React.FC = () => {
 
       return days.map(date => ({
         name: date.split('-').slice(1).join('/'),
-        total: agendamentosFiltrados.filter(a => a.data_agendamento === date).length
+        total: receitasFiltradas.filter(r => r.data_transacao.startsWith(date)).reduce((sum, r) => sum + r.valor, 0)
       }));
     }
 
@@ -151,9 +232,9 @@ const Dashboard: React.FC = () => {
 
     return last7Days.map(date => ({
       name: date.split('-').slice(1).join('/'),
-      total: agendamentosFiltrados.filter(a => a.data_agendamento === date).length
+      total: receitasFiltradas.filter(r => r.data_transacao.startsWith(date)).reduce((sum, r) => sum + r.valor, 0)
     }));
-  }, [agendamentosFiltrados, dataInicio, dataFim]);
+  }, [receitasFiltradas, dataInicio, dataFim]);
 
   const limparFiltros = () => {
     setDataInicio('');
@@ -163,10 +244,18 @@ const Dashboard: React.FC = () => {
 
   const handleAtualizarStatus = async (appointmentId: string, novoStatusValue: string) => {
     try {
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        console.error('❌ Company ID não encontrado');
+        return;
+      }
+
       const { error } = await supabase
         .from('agendamentos')
         .update({ status: novoStatusValue })
-        .eq('id', appointmentId);
+        .eq('id', appointmentId)
+        .eq('company_id', companyId);
 
       if (error) throw error;
 
@@ -178,7 +267,7 @@ const Dashboard: React.FC = () => {
       setEditandoStatus(null);
       setNovoStatus('');
     } catch (error) {
-      console.error('Erro ao atualizar status:', error);
+      console.error('❌ Erro ao atualizar status:', error);
       alert('Erro ao atualizar status');
     }
   };
@@ -198,11 +287,33 @@ const Dashboard: React.FC = () => {
   };
 
   const getStatusColor = (status: string) => {
-    if (status === 'finalizado' || status === 'confirmed') return 'bg-green-100 text-green-700';
+    if (status === 'confirmado' || status === 'confirmed') return 'bg-green-100 text-green-700';
     if (status === 'pendente' || status === 'pending') return 'bg-blue-100 text-blue-700';
     if (status === 'cancelado' || status === 'cancelled') return 'bg-red-100 text-red-700';
     return 'bg-gray-100 text-gray-700';
   };
+
+  // ❌ EMPRESA BLOQUEADA
+  if (empresaBloqueada) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 space-y-4">
+        <div className="text-6xl">🚫</div>
+        <h2 className="text-2xl font-bold text-red-600">Empresa Bloqueada</h2>
+        <p className="text-slate-500 text-center max-w-md">
+          Sua empresa foi desativada pelo administrador e não pode acessar o sistema.
+        </p>
+        <button
+          onClick={() => {
+            localStorage.removeItem('companyId');
+            window.location.href = '/login';
+          }}
+          className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold transition-colors"
+        >
+          Voltar ao Login
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -277,7 +388,7 @@ const Dashboard: React.FC = () => {
 
         {temFiltros && (
           <div className="mt-3 p-2 md:p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs md:text-sm text-indigo-700">
-            📊 Mostrando {agendamentosFiltrados.length} agendamento(s)
+            📊 Mostrando {agendamentosFiltrados.length} agendamento(s) | R$ {receitasFiltradas.reduce((sum, r) => sum + r.valor, 0).toFixed(2)} em receitas
           </div>
         )}
       </div>
@@ -300,7 +411,7 @@ const Dashboard: React.FC = () => {
       <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm">
         <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4 md:mb-6 flex items-center gap-2">
           <TrendingUp size={18} className="text-indigo-600" />
-          Fluxo
+          Fluxo de Receitas
         </h3>
         <div className="h-48 md:h-64">
           <ResponsiveContainer width="100%" height="100%">
@@ -311,6 +422,7 @@ const Dashboard: React.FC = () => {
               <Tooltip 
                 cursor={{ fill: '#f8fafc' }}
                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                formatter={(value) => `R$ ${Number(value).toFixed(2)}`}
               />
               <Bar dataKey="total" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={20} />
             </BarChart>
@@ -323,7 +435,7 @@ const Dashboard: React.FC = () => {
         <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4">Faturamento por Profissional</h3>
         
         {Object.keys(faturamentoPorProfissional).length === 0 ? (
-          <p className="text-slate-500 text-sm">Nenhum agendamento confirmado neste período.</p>
+          <p className="text-slate-500 text-sm">Nenhuma receita neste período.</p>
         ) : (
           <div className="space-y-3">
             {Object.entries(faturamentoPorProfissional)
@@ -333,7 +445,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex justify-between items-center mb-2">
                     <div>
                       <p className="font-semibold text-slate-800">{dados.nome}</p>
-                      <p className="text-xs text-slate-500">{dados.quantidade} agendamento(s)</p>
+                      <p className="text-xs text-slate-500">{dados.quantidade} receita(s)</p>
                     </div>
                     <p className="text-2xl font-bold text-green-600">R$ {dados.total.toFixed(2)}</p>
                   </div>
@@ -352,6 +464,8 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* AGENDAMENTOS */}
       <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
         <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4">Agendamentos</h3>
         

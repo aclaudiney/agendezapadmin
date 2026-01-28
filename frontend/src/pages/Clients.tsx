@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Plus, Trash2, Edit2, X, AlertCircle, Cake } from 'lucide-react';
+import { Plus, Trash2, Edit2, X, AlertCircle, Phone, Calendar } from 'lucide-react';
 
 const Clients: React.FC = () => {
   const [clientes, setClientes] = useState<any[]>([]);
@@ -8,162 +8,205 @@ const Clients: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [erro, setErro] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const [formData, setFormData] = useState({
     nome: '',
     telefone: '',
-    email: '',
     data_nascimento: '',
+    ativo: true,
   });
 
   useEffect(() => {
     fetchClientes();
   }, []);
 
+  // ✅ BUSCAR APENAS CLIENTES ATIVOS
   const fetchClientes = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.from('clientes').select('*').order('nome', { ascending: true });
-      if (!error) setClientes(data || []);
+      setErro('');
+
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        setLoading(false);
+        return;
+      }
+
+      console.log('🔍 Buscando clientes ativos para company_id:', companyId);
+
+      const { data, error } = await supabase
+        .from('clientes')
+        .select('*', { count: 'exact' })
+        .eq('company_id', companyId)
+        .eq('ativo', true) // ✅ APENAS ATIVOS
+        .order('nome', { ascending: true });
+
+      if (error) {
+        console.error('❌ Erro ao buscar clientes:', error);
+        setErro('Erro ao carregar clientes');
+        setLoading(false);
+        return;
+      }
+
+      console.log('✅ Clientes carregados:', data?.length || 0);
+      setClientes(data || []);
+      setErro('');
     } catch (error) {
+      console.error('❌ Erro crítico:', error);
       setErro('Erro ao carregar clientes');
-      console.error(error);
     } finally {
       setLoading(false);
     }
-  };
-
-  // Função para calcular idade
-  const calcularIdade = (dataNascimento: string | null) => {
-    if (!dataNascimento) return null;
-    
-    const hoje = new Date();
-    const nascimento = new Date(dataNascimento);
-    let idade = hoje.getFullYear() - nascimento.getFullYear();
-    const mesAtual = hoje.getMonth();
-    const mesNascimento = nascimento.getMonth();
-    
-    if (mesAtual < mesNascimento || (mesAtual === mesNascimento && hoje.getDate() < nascimento.getDate())) {
-      idade--;
-    }
-    
-    return idade;
-  };
-
-  // Função para verificar se é aniversário hoje
-  const ehAniversarioHoje = (dataNascimento: string | null) => {
-    if (!dataNascimento) return false;
-    
-    const hoje = new Date();
-    const nascimento = new Date(dataNascimento);
-    
-    return (
-      hoje.getDate() === nascimento.getDate() &&
-      hoje.getMonth() === nascimento.getMonth()
-    );
-  };
-
-  // Função para formatar data para o padrão brasileiro
-  const formatarDataBR = (data: string | null) => {
-    if (!data) return '-';
-    return new Date(data).toLocaleDateString('pt-BR');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro('');
 
-    if (!formData.nome) {
-      setErro('Preencha o nome');
+    if (!formData.nome.trim() || !formData.telefone.trim()) {
+      setErro('Preencha nome e telefone');
       return;
     }
 
     try {
-      const dataToSave = {
-        nome: formData.nome,
-        telefone: formData.telefone || null,
-        email: formData.email || null,
-        data_nascimento: formData.data_nascimento || null,
-      };
-
-      if (editingId) {
-        // Atualizar
-        const { error } = await supabase
-          .from('clientes')
-          .update(dataToSave)
-          .eq('id', editingId);
-
-        if (error) {
-          setErro('Erro ao atualizar cliente');
-          console.error(error);
-          return;
-        }
-      } else {
-        // Criar novo
-        const { error } = await supabase.from('clientes').insert([dataToSave]);
-
-        if (error) {
-          setErro('Erro ao criar cliente');
-          console.error(error);
-          return;
-        }
-      }
-
-      setFormData({ nome: '', telefone: '', email: '', data_nascimento: '' });
-      setEditingId(null);
-      setShowModal(false);
-      fetchClientes();
-    } catch (error) {
-      setErro('Erro ao salvar cliente');
-      console.error(error);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Tem certeza que deseja deletar este cliente?')) return;
-
-    try {
-      const { error } = await supabase.from('clientes').delete().eq('id', id);
-
-      if (error) {
-        setErro('Erro ao deletar cliente');
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
         return;
       }
 
-      fetchClientes();
+      if (editingId) {
+        // ✅ ATUALIZAR
+        const { error } = await supabase
+          .from('clientes')
+          .update({
+            nome: formData.nome,
+            telefone: formData.telefone,
+            data_nascimento: formData.data_nascimento || null,
+            ativo: formData.ativo,
+          })
+          .eq('id', editingId)
+          .eq('company_id', companyId);
+
+        if (error) {
+          console.error('❌ Erro ao atualizar:', error);
+          setErro('Erro ao atualizar cliente');
+          return;
+        }
+
+        console.log('✅ Cliente atualizado');
+      } else {
+        // ✅ CRIAR NOVO
+        const { error } = await supabase
+          .from('clientes')
+          .insert([{
+            company_id: companyId,
+            nome: formData.nome,
+            telefone: formData.telefone,
+            data_nascimento: formData.data_nascimento || null,
+            ativo: true, // ✅ SEMPRE CRIA ATIVO
+          }]);
+
+        if (error) {
+          console.error('❌ Erro ao criar:', error);
+          setErro('Erro ao criar cliente');
+          return;
+        }
+
+        console.log('✅ Cliente criado');
+      }
+
+      setFormData({ nome: '', telefone: '', data_nascimento: '', ativo: true });
+      setEditingId(null);
+      setShowModal(false);
+      setErro('');
+      await fetchClientes();
     } catch (error) {
-      setErro('Erro ao deletar');
-      console.error(error);
+      console.error('❌ Erro crítico:', error);
+      setErro('Erro ao salvar cliente');
+    }
+  };
+
+  // ✅ SOFT DELETE - DESATIVAR EM VEZ DE DELETAR
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja desativar este cliente? (Será ocultado, mas o histórico será mantido)')) return;
+
+    try {
+      console.log('🔒 Desativando cliente:', id);
+
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      // ✅ DESATIVAR EM VEZ DE DELETAR (SOFT DELETE)
+      const { error } = await supabase
+        .from('clientes')
+        .update({ ativo: false })
+        .eq('id', id)
+        .eq('company_id', companyId);
+
+      if (error) {
+        console.error('❌ Erro ao desativar:', error);
+        setErro('Erro ao desativar cliente');
+        return;
+      }
+
+      console.log('✅ Cliente desativado com sucesso!');
+      setErro('');
+      
+      // ✅ REMOVER DO ESTADO LOCAL IMEDIATAMENTE
+      setClientes(clientes.filter(c => c.id !== id));
+      
+      // ✅ DEPOIS RECARREGAR DO BANCO
+      setTimeout(() => {
+        fetchClientes();
+      }, 500);
+      
+    } catch (error) {
+      console.error('❌ Erro crítico:', error);
+      setErro('Erro ao desativar');
     }
   };
 
   const handleEdit = (cliente: any) => {
     setFormData({
       nome: cliente.nome,
-      telefone: cliente.telefone || '',
-      email: cliente.email || '',
+      telefone: cliente.telefone,
       data_nascimento: cliente.data_nascimento || '',
+      ativo: cliente.ativo ?? true,
     });
     setEditingId(cliente.id);
     setShowModal(true);
   };
 
   const openNewModal = () => {
-    setFormData({ nome: '', telefone: '', email: '', data_nascimento: '' });
+    setFormData({ nome: '', telefone: '', data_nascimento: '', ativo: true });
     setEditingId(null);
     setShowModal(true);
   };
 
+  const clientesFiltrados = clientes.filter(c =>
+    c.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.telefone.includes(searchTerm)
+  );
+
   if (loading) {
-    return <div className="flex items-center justify-center h-96"><p className="text-slate-500">Carregando...</p></div>;
+    return <div className="flex items-center justify-center h-96"><p className="text-slate-500">Carregando clientes...</p></div>;
   }
 
   return (
     <div className="space-y-6">
       <header className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Base de Clientes</h2>
-          <p className="text-slate-500">Gerencie todos os clientes do seu salão.</p>
+          <h2 className="text-2xl font-bold text-slate-800">Gerenciamento de Clientes</h2>
+          <p className="text-slate-500">Adicione, edite ou remova clientes da sua base de dados.</p>
         </div>
         <button 
           onClick={openNewModal}
@@ -174,92 +217,88 @@ const Clients: React.FC = () => {
         </button>
       </header>
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-100">
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Nome</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Telefone</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Aniversário</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Idade</th>
-                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {clientes.map(cliente => {
-                const isAniversario = ehAniversarioHoje(cliente.data_nascimento);
-                const idade = calcularIdade(cliente.data_nascimento);
-                
-                return (
-                  <tr 
-                    key={cliente.id} 
-                    className={`hover:bg-slate-50/50 transition-colors ${isAniversario ? 'bg-yellow-50' : ''}`}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-slate-800">{cliente.nome}</p>
-                        {isAniversario && (
-                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 text-xs font-semibold">
-                            <Cake size={12} />
-                            Parabéns!
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-slate-600">{cliente.telefone || '-'}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-slate-600">{cliente.email || '-'}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-slate-600 font-medium">
-                        {formatarDataBR(cliente.data_nascimento)}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-slate-600">
-                        {idade !== null ? `${idade} anos` : '-'}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => handleEdit(cliente)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Editar"
-                        >
-                          <Edit2 size={18} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(cliente.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Deletar"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {erro && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{erro}</p>
         </div>
+      )}
+
+      {/* Barra de Busca */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="Buscar por nome ou telefone..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
       </div>
 
-      {clientes.length === 0 && (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {clientesFiltrados.map(cliente => (
+          <div key={cliente.id} className="p-6 bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start mb-4">
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-slate-800">{cliente.nome}</h3>
+                <span className={`text-xs font-bold mt-1 inline-block px-2 py-1 rounded ${
+                  cliente.ativo 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {cliente.ativo ? '✅ Ativo' : '❌ Inativo'}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleEdit(cliente)}
+                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  title="Editar"
+                >
+                  <Edit2 size={18} />
+                </button>
+                <button
+                  onClick={() => handleDelete(cliente.id)}
+                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Desativar"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="space-y-3 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <Phone size={16} className="text-slate-400" />
+                <p className="text-sm text-slate-700">{cliente.telefone}</p>
+              </div>
+              {cliente.data_nascimento && (
+                <div className="flex items-center gap-2">
+                  <Calendar size={16} className="text-slate-400" />
+                  <p className="text-sm text-slate-700">
+                    {new Date(cliente.data_nascimento).toLocaleDateString('pt-BR')}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {clientesFiltrados.length === 0 && (
         <div className="text-center py-20">
-          <p className="text-slate-400 mb-4">Nenhum cliente cadastrado</p>
-          <button 
-            onClick={openNewModal}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg mx-auto"
-          >
-            <Plus size={18} />
-            Adicionar Primeiro Cliente
-          </button>
+          <p className="text-slate-400 mb-4">
+            {searchTerm ? 'Nenhum cliente encontrado com esse termo' : 'Nenhum cliente ativo cadastrado'}
+          </p>
+          {!searchTerm && (
+            <button 
+              onClick={openNewModal}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg mx-auto hover:bg-indigo-700"
+            >
+              <Plus size={18} />
+              Adicionar Primeiro Cliente
+            </button>
+          )}
         </div>
       )}
 
@@ -288,35 +327,26 @@ const Clients: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Nome Completo *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Nome *</label>
                 <input 
                   type="text"
                   value={formData.nome}
                   onChange={(e) => setFormData({...formData, nome: e.target.value})}
-                  placeholder="Ex: João Silva"
+                  placeholder="Ex: Maria Silva"
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Telefone</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Telefone *</label>
                 <input 
                   type="tel"
                   value={formData.telefone}
                   onChange={(e) => setFormData({...formData, telefone: e.target.value})}
                   placeholder="(11) 99999-9999"
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Email</label>
-                <input 
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  placeholder="joao@email.com"
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
@@ -328,11 +358,18 @@ const Clients: React.FC = () => {
                   onChange={(e) => setFormData({...formData, data_nascimento: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                {formData.data_nascimento && (
-                  <p className="text-xs text-slate-500 mt-1">
-                    Idade: {calcularIdade(formData.data_nascimento)} anos
-                  </p>
-                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-3">
+                  <input 
+                    type="checkbox"
+                    checked={formData.ativo}
+                    onChange={(e) => setFormData({...formData, ativo: e.target.checked})}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700">Cliente Ativo</span>
+                </label>
               </div>
 
               <div className="flex gap-3 pt-4">

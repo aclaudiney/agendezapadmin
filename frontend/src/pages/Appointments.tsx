@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Search, Filter, Download, MoreVertical, Plus, X, AlertCircle, Edit2, Check } from 'lucide-react';
+import { Search, Filter, Download, MoreVertical, Plus, X, AlertCircle, Edit2, Check, CreditCard, Trash2 } from 'lucide-react';
 
 const Appointments: React.FC = () => {
   const [filter, setFilter] = useState('all');
@@ -15,11 +15,14 @@ const Appointments: React.FC = () => {
   const [servicos, setServicos] = useState<any[]>([]);
   const [erro, setErro] = useState('');
 
+  // Estado para modal de pagamento
+  const [showPagamentoModal, setShowPagamentoModal] = useState(false);
+  const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<any>(null);
+  const [formaPagamento, setFormaPagamento] = useState('');
+
   // Estado para edição de status
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [novoStatus, setNovoStatus] = useState('');
-  const [mostrarFormaPagamento, setMostrarFormaPagamento] = useState(false);
-  const [formaPagamento, setFormaPagamento] = useState('');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -29,28 +32,41 @@ const Appointments: React.FC = () => {
     data_agendamento: '',
     hora_agendamento: '',
     status: 'pendente',
-    forma_pagamento: '',
   });
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  // ✅ BUSCAR DADOS COM FILTRO POR COMPANY_ID
   const fetchData = async () => {
     try {
       setLoading(true);
 
+      // ✅ PEGAR COMPANY_ID DO LOCALSTORAGE
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      console.log('🔍 Buscando dados para company_id:', companyId);
+
+      // ✅ BUSCAR DADOS FILTRANDO POR COMPANY_ID
       const [agendamentosRes, clientesRes, profissionaisRes, servicosRes] = await Promise.all([
-        supabase.from('agendamentos').select('*'),
-        supabase.from('clientes').select('*'),
-        supabase.from('profissionais').select('*'),
-        supabase.from('servicos').select('*'),
+        supabase.from('agendamentos').select('*').eq('company_id', companyId),
+        supabase.from('clientes').select('*').eq('company_id', companyId),
+        supabase.from('profissionais').select('*').eq('company_id', companyId),
+        supabase.from('servicos').select('*').eq('company_id', companyId),
       ]);
 
       setAgendamentos(agendamentosRes.data || []);
       setClientes(clientesRes.data || []);
       setProfissionais(profissionaisRes.data || []);
       setServicos(servicosRes.data || []);
+
+      console.log('✅ Dados carregados');
     } catch (error) {
       setErro('Erro ao carregar dados');
       console.error(error);
@@ -69,28 +85,40 @@ const Appointments: React.FC = () => {
     }
 
     try {
-      // Preparar dados
+      // ✅ PEGAR COMPANY_ID
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      // ✅ PREPARAR DADOS
       const dataToInsert = {
+        company_id: companyId,
         cliente_id: formData.cliente_id,
         profissional_id: formData.profissional_id,
         servico_id: formData.servico_id,
         data_agendamento: formData.data_agendamento,
         hora_agendamento: formData.hora_agendamento,
         status: formData.status,
-        forma_pagamento: formData.status === 'finalizado' ? formData.forma_pagamento : null,
+        forma_pagamento: null,
+        valor_pago: null,
+        data_pagamento: null,
+        origem: 'web',
       };
 
-      console.log('Inserindo dados:', dataToInsert);
+      console.log('📝 Inserindo dados:', dataToInsert);
 
       const { error } = await supabase.from('agendamentos').insert([dataToInsert]);
 
       if (error) {
-        console.error('Erro ao criar:', error);
+        console.error('❌ Erro ao criar:', error);
         setErro(`Erro ao criar agendamento: ${error.message || 'Erro desconhecido'}`);
         return;
       }
 
-      console.log('Agendamento criado com sucesso!');
+      console.log('✅ Agendamento criado com sucesso!');
 
       setFormData({
         cliente_id: '',
@@ -99,72 +127,201 @@ const Appointments: React.FC = () => {
         data_agendamento: '',
         hora_agendamento: '',
         status: 'pendente',
-        forma_pagamento: '',
       });
       setShowModal(false);
-      fetchData();
+      await fetchData();
     } catch (error: any) {
-      console.error('Erro ao salvar agendamento:', error);
+      console.error('❌ Erro ao salvar agendamento:', error);
       setErro(error?.message || 'Erro ao salvar agendamento');
     }
   };
 
-  // Função para atualizar status e forma de pagamento
-  const handleAtualizarStatus = async (aptId: string, novoStatusValue: string, formaPagamentoValue?: string) => {
+  // ✅ ATUALIZAR STATUS E ABRIR MODAL DE PAGAMENTO
+  const handleAtualizarStatus = async (aptId: string, novoStatusValue: string) => {
     try {
-      // Se o status for finalizado, precisa ter forma de pagamento
-      if (novoStatusValue === 'finalizado') {
-        if (!formaPagamentoValue) {
-          setErro('Selecione uma forma de pagamento para finalizar o agendamento');
-          return;
-        }
+      // ✅ PEGAR COMPANY_ID
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
       }
 
-      // Preparar os dados para atualizar
-      const updateData: any = {
+      // SE FOR CONFIRMADO, PEDIR FORMA DE PAGAMENTO
+      if (novoStatusValue === 'confirmado') {
+        const agendamento = agendamentos.find(a => a.id === aptId);
+        setAgendamentoSelecionado(agendamento);
+        setFormaPagamento('');
+        setShowPagamentoModal(true);
+        setEditandoId(null);
+        return;
+      }
+
+      // PARA OUTROS STATUS, APENAS ATUALIZAR
+      const updateData = {
         status: novoStatusValue
       };
 
-      // Só adiciona forma_pagamento se for finalizado
-      if (novoStatusValue === 'finalizado') {
-        updateData.forma_pagamento = formaPagamentoValue;
-      } else {
-        updateData.forma_pagamento = null;
-      }
+      console.log('🔄 Atualizando com dados:', updateData);
 
-      console.log('Atualizando com dados:', updateData);
-
-      // Atualizar status
       const { error } = await supabase
         .from('agendamentos')
         .update(updateData)
-        .eq('id', aptId);
+        .eq('id', aptId)
+        .eq('company_id', companyId);
 
       if (error) {
-        console.error('Erro detalhado do Supabase:', error);
+        console.error('❌ Erro detalhado do Supabase:', error);
         setErro(`Erro ao salvar: ${error.message || 'Erro desconhecido'}`);
         return;
       }
 
-      console.log('Atualização bem-sucedida!');
+      console.log('✅ Atualização bem-sucedida!');
 
-      // Atualizar no estado local
       setAgendamentos(agendamentos.map(apt =>
         apt.id === aptId ? { 
           ...apt, 
-          status: novoStatusValue, 
-          forma_pagamento: updateData.forma_pagamento || apt.forma_pagamento 
+          status: novoStatusValue
         } : apt
       ));
 
       setEditandoId(null);
       setNovoStatus('');
-      setFormaPagamento('');
-      setMostrarFormaPagamento(false);
       setErro('');
     } catch (error: any) {
-      console.error('Erro ao atualizar status:', error);
+      console.error('❌ Erro ao atualizar status:', error);
       setErro(error?.message || 'Erro ao atualizar status');
+    }
+  };
+
+  // ✅ DELETAR AGENDAMENTO (DELETA FINANCEIRO PRIMEIRO, DEPOIS AGENDAMENTO)
+  const handleDeleteAgendamento = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja deletar este agendamento?\n\nEsta ação não pode ser desfeita!')) return;
+
+    try {
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      console.log('🗑️ Deletando agendamento:', id);
+
+      // ✅ PASSO 1: DELETAR RECEITAS VINCULADAS EM FINANCEIRO
+      console.log('1️⃣ Deletando receitas em financeiro...');
+      const { error: errorFinanceiro } = await supabase
+        .from('financeiro')
+        .delete()
+        .eq('agendamento_id', id)
+        .eq('company_id', companyId);
+
+      if (errorFinanceiro) {
+        console.error('❌ Erro ao deletar receita:', errorFinanceiro);
+        setErro('Erro ao deletar receita vinculada');
+        return;
+      }
+
+      console.log('✅ Receitas deletadas!');
+
+      // ✅ PASSO 2: AGORA DELETAR O AGENDAMENTO
+      console.log('2️⃣ Deletando agendamento...');
+      const { error: errorAgendamento } = await supabase
+        .from('agendamentos')
+        .delete()
+        .eq('id', id)
+        .eq('company_id', companyId);
+
+      if (errorAgendamento) {
+        console.error('❌ Erro ao deletar agendamento:', errorAgendamento);
+        setErro('Erro ao deletar agendamento');
+        return;
+      }
+
+      console.log('✅ Agendamento deletado!');
+      setErro('');
+      setAgendamentos(agendamentos.filter(a => a.id !== id));
+    } catch (error) {
+      console.error('❌ Erro crítico:', error);
+      setErro('Erro ao deletar');
+    }
+  };
+
+  // ✅ SALVAR PAGAMENTO
+  const handleSalvarPagamento = async () => {
+    try {
+      if (!formaPagamento) {
+        setErro('Selecione uma forma de pagamento');
+        return;
+      }
+
+      const companyId = localStorage.getItem('companyId');
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      // ✅ BUSCAR VALOR DO SERVIÇO
+      const servico = servicos.find(s => s.id === agendamentoSelecionado.servico_id);
+      const valor = servico?.preco || 0;
+
+      // ✅ ATUALIZAR AGENDAMENTO
+      const { error: errorAgendamento } = await supabase
+        .from('agendamentos')
+        .update({
+          status: 'confirmado',
+          forma_pagamento: formaPagamento,
+          valor_pago: valor,
+          data_pagamento: new Date().toISOString()
+        })
+        .eq('id', agendamentoSelecionado.id)
+        .eq('company_id', companyId);
+
+      if (errorAgendamento) {
+        console.error('❌ Erro ao atualizar agendamento:', errorAgendamento);
+        setErro('Erro ao confirmar pagamento');
+        return;
+      }
+
+      // ✅ INSERIR EM FINANCEIRO (RECEITA)
+      const { error: errorFinanceiro } = await supabase
+        .from('financeiro')
+        .insert([{
+          company_id: companyId,
+          tipo: 'receita',
+          descricao: `Pagamento - ${servico?.nome || 'Serviço'}`,
+          valor: valor,
+          forma_pagamento: formaPagamento.toLowerCase(),
+          agendamento_id: agendamentoSelecionado.id,
+          data_transacao: new Date().toISOString()
+        }]);
+
+      if (errorFinanceiro) {
+        console.error('❌ Erro ao criar financeiro:', errorFinanceiro);
+        setErro('Erro ao registrar na financeiro');
+        return;
+      }
+
+      console.log('✅ Pagamento salvo com sucesso!');
+
+      // ✅ ATUALIZAR ESTADO LOCAL
+      setAgendamentos(agendamentos.map(apt =>
+        apt.id === agendamentoSelecionado.id ? {
+          ...apt,
+          status: 'confirmado',
+          forma_pagamento: formaPagamento,
+          valor_pago: valor,
+          data_pagamento: new Date().toISOString()
+        } : apt
+      ));
+
+      setShowPagamentoModal(false);
+      setAgendamentoSelecionado(null);
+      setFormaPagamento('');
+      setErro('');
+    } catch (error: any) {
+      console.error('❌ Erro ao salvar pagamento:', error);
+      setErro(error?.message || 'Erro ao salvar pagamento');
     }
   };
 
@@ -209,7 +366,7 @@ const Appointments: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center h-96"><p className="text-slate-500">Carregando...</p></div>;
+    return <div className="flex items-center justify-center h-96"><p className="text-slate-500">Carregando agendamentos...</p></div>;
   }
 
   return (
@@ -227,6 +384,13 @@ const Appointments: React.FC = () => {
           Novo Agendamento
         </button>
       </header>
+
+      {erro && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{erro}</p>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* FILTROS */}
@@ -310,6 +474,7 @@ const Appointments: React.FC = () => {
                 <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Valor</th>
                 <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Pagamento</th>
                 <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Ação</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -338,8 +503,8 @@ const Appointments: React.FC = () => {
                       <span className="text-sm font-bold text-green-600">R$ {servico?.preco?.toFixed(2) || '0.00'}</span>
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
-                      <span className="text-sm text-slate-600">
-                        {apt.status === 'finalizado' && apt.forma_pagamento ? apt.forma_pagamento : '-'}
+                      <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded capitalize">
+                        {apt.forma_pagamento || '-'}
                       </span>
                     </td>
                     <td className="px-4 md:px-6 py-4">
@@ -347,13 +512,7 @@ const Appointments: React.FC = () => {
                         <div className="flex flex-col gap-3 min-w-max">
                           <select
                             value={novoStatus}
-                            onChange={(e) => {
-                              setNovoStatus(e.target.value);
-                              setMostrarFormaPagamento(e.target.value === 'finalizado');
-                              if (e.target.value !== 'finalizado') {
-                                setFormaPagamento('');
-                              }
-                            }}
+                            onChange={(e) => setNovoStatus(e.target.value)}
                             className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
                           >
                             <option value="">Selecionar</option>
@@ -363,26 +522,11 @@ const Appointments: React.FC = () => {
                             <option value="cancelado">Cancelado</option>
                           </select>
 
-                          {mostrarFormaPagamento && (
-                            <select
-                              value={formaPagamento}
-                              onChange={(e) => setFormaPagamento(e.target.value)}
-                              className="text-xs px-2 py-1 border border-green-200 rounded bg-green-50"
-                            >
-                              <option value="">Forma de pagamento</option>
-                              <option value="Dinheiro">💵 Dinheiro</option>
-                              <option value="Pix">📱 Pix</option>
-                              <option value="Débito">💳 Débito</option>
-                              <option value="Crédito">💰 Crédito</option>
-                            </select>
-                          )}
-
                           <div className="flex gap-2">
                             <button
-                              onClick={() => {
-                                handleAtualizarStatus(apt.id, novoStatus, formaPagamento);
-                              }}
+                              onClick={() => handleAtualizarStatus(apt.id, novoStatus)}
                               className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                              disabled={!novoStatus}
                             >
                               <Check size={14} />
                             </button>
@@ -390,8 +534,6 @@ const Appointments: React.FC = () => {
                               onClick={() => {
                                 setEditandoId(null);
                                 setNovoStatus('');
-                                setFormaPagamento('');
-                                setMostrarFormaPagamento(false);
                               }}
                               className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
                             >
@@ -401,22 +543,13 @@ const Appointments: React.FC = () => {
                         </div>
                       ) : (
                         <div className="flex items-center gap-2">
-                          <div className="flex flex-col gap-1">
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(apt.status)}`}>
-                              {getStatusLabel(apt.status)}
-                            </span>
-                            {apt.status === 'finalizado' && apt.forma_pagamento && (
-                              <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-700 font-semibold text-center">
-                                {apt.forma_pagamento}
-                              </span>
-                            )}
-                          </div>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(apt.status)}`}>
+                            {getStatusLabel(apt.status)}
+                          </span>
                           <button
                             onClick={() => {
                               setEditandoId(apt.id);
                               setNovoStatus(apt.status);
-                              setFormaPagamento(apt.forma_pagamento || '');
-                              setMostrarFormaPagamento(apt.status === 'finalizado');
                             }}
                             className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
                           >
@@ -425,12 +558,21 @@ const Appointments: React.FC = () => {
                         </div>
                       )}
                     </td>
+                    <td className="px-4 md:px-6 py-4">
+                      <button
+                        onClick={() => handleDeleteAgendamento(apt.id)}
+                        className="p-1 text-red-600 hover:bg-red-50 rounded transition opacity-0 group-hover:opacity-100"
+                        title="Deletar agendamento"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
               {filteredAgendamentos.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-20 text-center text-slate-400">
+                  <td colSpan={8} className="px-6 py-20 text-center text-slate-400">
                     Nenhum agendamento encontrado para os filtros selecionados.
                   </td>
                 </tr>
@@ -440,7 +582,7 @@ const Appointments: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal */}
+      {/* MODAL DE NOVO AGENDAMENTO */}
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-300 max-h-[90vh] overflow-y-auto">
@@ -463,11 +605,12 @@ const Appointments: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Cliente</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Cliente *</label>
                 <select 
                   value={formData.cliente_id}
                   onChange={(e) => setFormData({...formData, cliente_id: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 >
                   <option value="">Selecione um cliente</option>
                   {clientes.map(c => (
@@ -477,11 +620,12 @@ const Appointments: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Profissional</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Profissional *</label>
                 <select 
                   value={formData.profissional_id}
                   onChange={(e) => setFormData({...formData, profissional_id: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 >
                   <option value="">Selecione um profissional</option>
                   {profissionais.map(p => (
@@ -491,11 +635,12 @@ const Appointments: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Serviço</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Serviço *</label>
                 <select 
                   value={formData.servico_id}
                   onChange={(e) => setFormData({...formData, servico_id: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 >
                   <option value="">Selecione um serviço</option>
                   {servicos.map(s => (
@@ -505,22 +650,24 @@ const Appointments: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Data</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Data *</label>
                 <input 
                   type="date"
                   value={formData.data_agendamento}
                   onChange={(e) => setFormData({...formData, data_agendamento: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Hora</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Hora *</label>
                 <input 
                   type="time"
                   value={formData.hora_agendamento}
                   onChange={(e) => setFormData({...formData, hora_agendamento: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
@@ -528,9 +675,7 @@ const Appointments: React.FC = () => {
                 <label className="block text-sm font-medium text-slate-700 mb-2">Status</label>
                 <select 
                   value={formData.status}
-                  onChange={(e) => {
-                    setFormData({...formData, status: e.target.value});
-                  }}
+                  onChange={(e) => setFormData({...formData, status: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="pendente">Pendente</option>
@@ -539,23 +684,6 @@ const Appointments: React.FC = () => {
                   <option value="cancelado">Cancelado</option>
                 </select>
               </div>
-
-              {formData.status === 'finalizado' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Forma de Pagamento</label>
-                  <select 
-                    value={formData.forma_pagamento}
-                    onChange={(e) => setFormData({...formData, forma_pagamento: e.target.value})}
-                    className="w-full px-4 py-2 border border-green-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50"
-                  >
-                    <option value="">Selecione a forma de pagamento</option>
-                    <option value="Dinheiro">💵 Dinheiro</option>
-                    <option value="Pix">📱 Pix</option>
-                    <option value="Débito">💳 Débito</option>
-                    <option value="Crédito">💰 Crédito</option>
-                  </select>
-                </div>
-              )}
 
               <div className="flex gap-3 pt-4">
                 <button
@@ -573,6 +701,77 @@ const Appointments: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE PAGAMENTO */}
+      {showPagamentoModal && agendamentoSelecionado && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-300">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-blue-100 rounded-lg">
+                <CreditCard className="text-blue-600" size={24} />
+              </div>
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800">Confirmar Pagamento</h3>
+                <p className="text-sm text-slate-500">Selecione a forma de pagamento</p>
+              </div>
+            </div>
+
+            {erro && (
+              <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+                <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{erro}</p>
+              </div>
+            )}
+
+            <div className="bg-slate-50 p-4 rounded-lg mb-6">
+              <p className="text-sm text-slate-600 mb-2">Valor a receber:</p>
+              <p className="text-3xl font-bold text-green-600">
+                R$ {servicos.find(s => s.id === agendamentoSelecionado.servico_id)?.preco?.toFixed(2) || '0.00'}
+              </p>
+            </div>
+
+            <div className="space-y-3 mb-6">
+              <label className="block text-sm font-medium text-slate-700">Forma de Pagamento *</label>
+              <div className="grid grid-cols-2 gap-3">
+                {['Dinheiro', 'PIX', 'Débito', 'Crédito'].map((opcao) => (
+                  <button
+                    key={opcao}
+                    onClick={() => setFormaPagamento(opcao.toLowerCase())}
+                    className={`p-3 rounded-lg border-2 font-semibold transition-all ${
+                      formaPagamento === opcao.toLowerCase()
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300'
+                    }`}
+                  >
+                    {opcao}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowPagamentoModal(false);
+                  setAgendamentoSelecionado(null);
+                  setFormaPagamento('');
+                }}
+                className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSalvarPagamento}
+                disabled={!formaPagamento}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Check size={18} />
+                Confirmar
+              </button>
+            </div>
           </div>
         </div>
       )}

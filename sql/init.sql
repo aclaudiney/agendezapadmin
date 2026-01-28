@@ -1,288 +1,224 @@
--- Tabela de Serviços
-CREATE TABLE servicos (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  nome VARCHAR(255) NOT NULL,
-  descricao TEXT,
-  preco DECIMAL(10, 2),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Tabela de Profissionais
-CREATE TABLE profissionais (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  nome VARCHAR(255) NOT NULL,
-  especialidade VARCHAR(255),
-  telefone VARCHAR(20),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Tabela de Clientes
-CREATE TABLE clientes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  nome VARCHAR(255) NOT NULL,
-  telefone VARCHAR(20),
-  email VARCHAR(255),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Tabela de Agendamentos
-CREATE TABLE agendamentos (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  cliente_id UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
-  profissional_id UUID NOT NULL REFERENCES profissionais(id) ON DELETE CASCADE,
-  servico_id UUID NOT NULL REFERENCES servicos(id) ON DELETE CASCADE,
-  data_agendamento DATE NOT NULL,
-  hora_agendamento TIME NOT NULL,
-  status VARCHAR(50) DEFAULT 'pendente',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-
--- Tabela de Usuários
-CREATE TABLE usuarios (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email VARCHAR(255) NOT NULL UNIQUE,
-  senha VARCHAR(255) NOT NULL,
-  nome_estabelecimento VARCHAR(255),
-  telefone VARCHAR(20),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Inserir um usuário de teste
-INSERT INTO usuarios (email, senha, nome_estabelecimento, telefone) 
-VALUES ('admin@agendezap.com', 'admin123', 'Meu Salão', '11999999999');
-
-
--- Adicionar coluna duracao (em minutos) na tabela servicos
-ALTER TABLE servicos ADD COLUMN duracao_minutos INTEGER DEFAULT 30;
-
--- Atualizar o serviço existente (Corte = 30 minutos)
-UPDATE servicos SET duracao_minutos = 30 WHERE nome = 'Corte';
-
-
--- Criar tabela de configuracoes
-CREATE TABLE configuracoes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  horario_inicio VARCHAR(5) DEFAULT '08:00',
-  horario_fim VARCHAR(5) DEFAULT '18:00',
-  dias_funcionamento TEXT DEFAULT 'Segunda à Sexta',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Inserir configuracao padrao
-INSERT INTO configuracoes (horario_inicio, horario_fim, dias_funcionamento)
-VALUES ('08:00', '18:00', 'Segunda à Sexta');
-
-
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS nome_estabelecimento TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS email_estabelecimento TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS telefone_estabelecimento TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS whatsapp_numero TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS endereco TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS dias_abertura JSONB DEFAULT '{"segunda": true, "terca": true, "quarta": true, "quinta": true, "sexta": true, "sabado": false, "domingo": false}';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_segunda TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_terca TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_quarta TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_quinta TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_sexta TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_sabado TEXT DEFAULT '08:00-18:00';
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS horario_domingo TEXT DEFAULT '08:00-18:00';
-
-
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS cep TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS rua TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS numero TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS estado TEXT;
-
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS cep TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS rua TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS numero TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS estado TEXT;
-ALTER TABLE configuracoes ADD COLUMN IF NOT EXISTS cidade TEXT;
-
-
--- Políticas de acesso público para leitura
-create policy "Allow public read"
-on storage.objects for select
-using (bucket_id = 'loja-imagens');
-
--- Políticas para upload autenticado
-create policy "Allow authenticated upload"
-on storage.objects for insert
-with check (
-  bucket_id = 'loja-imagens'
-);
-
--- Políticas para atualizar
-create policy "Allow authenticated update"
-on storage.objects for update
-with check (
-  bucket_id = 'loja-imagens'
-);
-
--- Adicionar coluna cor_tema
-ALTER TABLE configuracoes 
-ADD COLUMN cor_tema VARCHAR(7) DEFAULT '#6366f1';
-
--- Adicionar coluna imagem_capa
-ALTER TABLE configuracoes 
-ADD COLUMN imagem_capa TEXT;
-
--- Adicionar coluna descricao_loja
-ALTER TABLE configuracoes 
-ADD COLUMN descricao_loja TEXT;
-
--- Adicionar colunas de redes sociais
-ALTER TABLE configuracoes 
-ADD COLUMN facebook_url TEXT;
-
-ALTER TABLE configuracoes 
-ADD COLUMN instagram_url TEXT;
-
-ALTER TABLE configuracoes 
-ADD COLUMN linkedin_url TEXT;
-
-ALTER TABLE configuracoes 
-ADD COLUMN tiktok_url TEXT;
-
-ALTER TABLE configuracoes 
-ADD COLUMN youtube_url TEXT;
-
-ALTER TABLE clientes
-ADD COLUMN IF NOT EXISTS data_nascimento DATE;
-
-ALTER TABLE clientes
-ALTER COLUMN email DROP NOT NULL;
-
-ALTER TABLE clientes
-ADD COLUMN IF NOT EXISTS data_nascimento DATE;
-
-ALTER TABLE clientes
-ALTER COLUMN email DROP NOT NULL;
-
-CREATE TABLE agente_config (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nome_agente TEXT DEFAULT 'Atendente Virtual',
-    prompt TEXT,
-    ativo BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
-);
-
--- Insira um registro inicial para podermos editar
-INSERT INTO agente_config (nome_agente, prompt) 
-VALUES ('Atendente Virtual', 'Você é um assistente simpático de uma barbearia.');
-
-CREATE TABLE IF NOT EXISTS agente_config (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nome_agente TEXT DEFAULT 'Atendente Virtual',
-    prompt TEXT DEFAULT 'Você é um assistente amigável.',
-    ativo BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-
--- Insira o primeiro registro para o front ter o que editar
-INSERT INTO agente_config (nome_agente, prompt, ativo)
-SELECT 'Atendente Virtual', 'Você é um assistente amigável.', true
-WHERE NOT EXISTS (SELECT 1 FROM agente_config LIMIT 1);
-
-INSERT INTO agente_config (nome_agente, prompt, ativo)
-VALUES ('Atendente Virtual', 'Você é um assistente simpático.', true);
-
--- Garante que a tabela está certa
-CREATE TABLE IF NOT EXISTS agente_config (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nome_agente TEXT DEFAULT 'Atendente Virtual',
-    prompt TEXT DEFAULT 'Você é um assistente amigável.',
-    ativo BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-
--- Deleta tudo o que tiver lá para não dar conflito
-TRUNCATE agente_config;
-
--- Insere o registro que o Front-end vai carregar
-INSERT INTO agente_config (nome_agente, prompt, ativo)
-VALUES ('Atendente Virtual', 'Você é um assistente amigável de uma barbearia.', true);
-
--- 1. Garante que o RLS está ativo (as políticas só funcionam se isso estiver ON)
-ALTER TABLE public.profissionais ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.servicos ENABLE ROW LEVEL SECURITY;
-
--- 2. Remove políticas antigas que podem estar conflitando
-DROP POLICY IF EXISTS "Permitir leitura para todos" ON public.profissionais;
-DROP POLICY IF EXISTS "Permitir leitura para todos" ON public.servicos;
-
--- 3. Cria uma política ultra-aberta para testes (Anon e Authenticated)
-CREATE POLICY "Acesso Total Leitura Profissionais" 
-ON public.profissionais FOR SELECT 
-TO anon, authenticated 
-USING (true);
-
-CREATE POLICY "Acesso Total Leitura Servicos" 
-ON public.servicos FOR SELECT 
-TO anon, authenticated 
-USING (true);
-
--- 4. Concede permissão de uso do esquema public (essencial para conexões externas)
-GRANT USAGE ON SCHEMA public TO anon;
-GRANT USAGE ON SCHEMA public TO authenticated;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-
-
--- Adicionar coluna 'origem' na tabela 'agendamentos'
-ALTER TABLE agendamentos
-ADD COLUMN origem TEXT DEFAULT 'whatsapp_bot';
-
--- Comentário explicativo
-COMMENT ON COLUMN agendamentos.origem IS 'Origem do agendamento: whatsapp_bot, web_form, gerente_app, etc';
-
-CREATE POLICY "Allow public read on servicos"
-ON servicos
-FOR SELECT
-TO public
-USING (true);
-
-CREATE POLICY "Allow public write on servicos"
-ON servicos
-FOR ALL
-TO public
-USING (true);
-
--- Criar tabela despesas
-CREATE TABLE despesas (
+-- 1. Tabela de Empresas
+CREATE TABLE IF NOT EXISTS companies (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  descricao TEXT NOT NULL,
-  valor DECIMAL(10, 2) NOT NULL,
-  data DATE NOT NULL,
-  categoria TEXT,
-  tipo TEXT DEFAULT 'despesa',
-  created_at TIMESTAMP DEFAULT now()
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL
 );
 
--- Criar políticas RLS
-ALTER TABLE despesas ENABLE ROW LEVEL SECURITY;
+-- 2. Tabela de Perfis (Acessos)
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
+  email TEXT,
+  company_id UUID REFERENCES companies(id), -- O ID da empresa que ele manda
+  role TEXT DEFAULT 'admin' -- 'superadmin' ou 'admin'
+);
 
-CREATE POLICY "Allow public read on despesas"
-ON despesas
-FOR SELECT
-TO public
-USING (true);
+-- 3. Inserir as 3 Empresas
+INSERT INTO companies (name, slug) VALUES 
+('Dom Barão', 'dom-barao'),
+('Studio Takata', 'studio-takata'),
+('West Side', 'west-side')
+ON CONFLICT (slug) DO NOTHING;
 
-CREATE POLICY "Allow public write on despesas"
-ON despesas
-FOR ALL
-TO public
-USING (true);
+-- 1. Garante que as empresas existam e pega os IDs delas
+-- (Rode isso primeiro para garantir que as empresas estão lá)
+INSERT INTO companies (name, slug) VALUES 
+('Dom Barão', 'dom-barao'),
+('Studio Takata', 'studio-takata'),
+('West Side', 'west-side')
+ON CONFLICT (slug) DO NOTHING;
 
-ALTER TABLE despesas
-ADD COLUMN forma_pagamento TEXT DEFAULT 'Dinheiro';
+-- 2. Vincula os usuários aos seus cargos e empresas
+-- Substitua os IDs abaixo pelos que você copiou no passo anterior
 
--- Criar coluna de data como TEXT em vez de DATE
-ALTER TABLE despesas
-ALTER COLUMN data TYPE TEXT;
+-- SEU ACESSO (SUPER ADMIN)
+INSERT INTO profiles (id, email, role) 
+VALUES ('ID-DO-ADMIN-AGENDEZAP', 'admin@agendezap.com', 'superadmin');
 
--- Ou (se quiser manter como DATE)
--- Execute isto no seu código JavaScript antes de salvar:
--- const dataLocal = new Date(formDespesa.data + 'T00:00:00');
+-- ACESSO DOM BARÃO
+INSERT INTO profiles (id, email, company_id, role) 
+VALUES (
+  'ID-DO-DOM-BARAO', 
+  'dombarao@admin.com', 
+  (SELECT id FROM companies WHERE slug = 'dom-barao'), 
+  'admin'
+);
+
+-- ACESSO TAKATA
+INSERT INTO profiles (id, email, company_id, role) 
+VALUES (
+  'ID-DO-TAKATA', 
+  'studiotakata@admin.com', 
+  (SELECT id FROM companies WHERE slug = 'studio-takata'), 
+  'admin'
+);
+
+-- ACESSO WEST SIDE
+INSERT INTO profiles (id, email, company_id, role) 
+VALUES (
+  'ID-DO-WESTSIDE', 
+  'westside@admin.com', 
+  (SELECT id FROM companies WHERE slug = 'west-side'), 
+  'admin'
+);
+
+
+
+--- NOVA TABELA PARA GERENCIAR SESSÕES DO WHATSAPP ---
+
+
+-- Tabela para gerenciar as instâncias do robô por empresa
+CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+  session_name TEXT UNIQUE NOT NULL, -- Ex: 'dom-barao-session'
+  status TEXT DEFAULT 'disconnected', -- 'connected', 'disconnected', 'qrcode'
+  qr_code TEXT, -- Guardaremos o Base64 do QR para exibir no seu painel
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Habilitar Realtime para essa tabela (importante para o QR Code aparecer na tela na hora)
+ALTER PUBLICATION supabase_realtime ADD TABLE whatsapp_sessions;
+
+
+
+
+
+--- ADICIONAR COLUNA 'ACTIVE' NA TABELA DE EMPRESAS ---
+
+-- Adiciona a coluna 'active' na tabela de empresas
+ALTER TABLE public.companies 
+ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;
+
+-- Garante que as 3 empresas que já criamos fiquem como ATIVAS
+UPDATE public.companies SET active = TRUE;
+
+--- Adiciona uma restrição para garantir que cada empresa tenha apenas uma sessão do WhatsApp
+
+ALTER TABLE public.whatsapp_sessions 
+ADD CONSTRAINT whatsapp_sessions_company_id_key UNIQUE (company_id);
+
+
+
+
+
+-- Torna a coluna session_name opcional para não travar o sistema
+ALTER TABLE public.whatsapp_sessions 
+ALTER COLUMN session_name DROP NOT NULL;
+
+
+
+---- Tabela de Clientes ----
+
+
+
+-- Adiciona coluna last_connected_at para rastrear a última conexão bem-sucedida
+
+-- Cria a tabela de clientes
+CREATE TABLE IF NOT EXISTS public.clientes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    nome TEXT,
+    telefone TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Habilita o Realtime para facilitar a visualização depois
+ALTER PUBLICATION supabase_realtime ADD TABLE public.clientes;
+
+
+
+
+-- 1. Tabela de Configurações da Loja
+CREATE TABLE IF NOT EXISTS public.configuracoes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    nome_estabelecimento TEXT,
+    horario_segunda TEXT DEFAULT '08:00-18:00',
+    horario_terca TEXT DEFAULT '08:00-18:00',
+    horario_quarta TEXT DEFAULT '08:00-18:00',
+    horario_quinta TEXT DEFAULT '08:00-18:00',
+    horario_sexta TEXT DEFAULT '08:00-18:00',
+    horario_sabado TEXT DEFAULT '09:00-13:00',
+    horario_domingo TEXT DEFAULT 'FECHADO',
+    dias_abertura JSONB DEFAULT '{"segunda": true, "terca": true, "quarta": true, "quinta": true, "sexta": true, "sabado": true, "domingo": false}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2. Tabela de Configuração da IA (Agente)
+CREATE TABLE IF NOT EXISTS public.agente_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    nome_agente TEXT DEFAULT 'Maia',
+    prompt TEXT,
+    link_booking TEXT,
+    ativo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 3. Tabela de Serviços
+CREATE TABLE IF NOT EXISTS public.servicos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    nome TEXT NOT NULL,
+    preco DECIMAL(10,2) NOT NULL,
+    duracao INT DEFAULT 30, -- minutos
+    ativo BOOLEAN DEFAULT TRUE
+);
+
+-- 4. Tabela de Profissionais
+CREATE TABLE IF NOT EXISTS public.profissionais (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    nome TEXT NOT NULL,
+    ativo BOOLEAN DEFAULT TRUE
+);
+
+-- 5. Tabela de Agendamentos (Caso ainda não tenha)
+CREATE TABLE IF NOT EXISTS public.agendamentos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES public.companies(id) ON DELETE CASCADE,
+    cliente_id UUID REFERENCES public.clientes(id),
+    servico_id UUID REFERENCES public.servicos(id),
+    profissional_id UUID REFERENCES public.profissionais(id),
+    data_agendamento DATE NOT NULL,
+    hora_agendamento TIME NOT NULL,
+    status TEXT DEFAULT 'pendente',
+    origem TEXT DEFAULT 'whatsapp',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ==========================================
+-- POPULANDO DADOS DE TESTE (DOM BARÃO)
+-- Substitua os IDs abaixo pelos IDs reais da sua tabela 'companies'
+-- ==========================================
+
+-- Exemplo para uma empresa (Repita para as outras trocando o ID):
+-- INSERT INTO public.configuracoes (company_id, nome_estabelecimento) 
+-- VALUES ('ID_DA_DOM_BARAO', 'Dom Barão Barbearia');
+
+-- INSERT INTO public.agente_config (company_id, nome_agente, prompt, link_booking) 
+-- VALUES ('ID_DA_DOM_BARAO', 'Bento', 'Você é o Bento, barbeiro da Dom Barão. Seja descontraído.', 'https://agendezap.com/dombarao');
+
+
+
+
+
+
+-- Garante que cada empresa tenha apenas UMA configuração de loja e UMA de agente
+ALTER TABLE public.configuracoes ADD CONSTRAINT unique_config_company UNIQUE (company_id);
+ALTER TABLE public.agente_config ADD CONSTRAINT unique_agente_company UNIQUE (company_id);
+
+
+
+-- Agora o comando vai funcionar perfeitamente!
+INSERT INTO public.configuracoes (company_id, nome_estabelecimento) 
+VALUES ('356e0a46-b1b3-4a70-8138-edd7b42e6b87', 'Dom Barão Barbearia')
+ON CONFLICT (company_id) DO UPDATE SET nome_estabelecimento = 'Dom Barão Barbearia';
+
+INSERT INTO public.agente_config (company_id, nome_agente, prompt, link_booking, ativo) 
+VALUES ('356e0a46-b1b3-4a70-8138-edd7b42e6b87', 'Bento', 'Você é o Bento, assistente da Dom Barão. Seja educado e focado em agendamentos.', 'https://agendezap.com/dombarao', true)
+ON CONFLICT (company_id) DO UPDATE SET nome_agente = 'Bento';
+
+INSERT INTO public.servicos (company_id, nome, preco, duracao)
+VALUES ('356e0a46-b1b3-4a70-8138-edd7b42e6b87', 'Corte de Cabelo', 50.00, 30);

@@ -2,29 +2,26 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { TrendingUp, Plus, Trash2, Edit2, X, AlertCircle } from 'lucide-react';
 
-interface Agendamento {
+interface Receita {
   id: string;
-  cliente_id: string;
-  data_agendamento: string;
-  hora_agendamento: string;
-  status: string;
+  descricao: string;
+  valor: number;
+  data_transacao: string;
   forma_pagamento: string;
-  clientes: { nome: string };
-  servicos: { nome: string; preco: number };
+  agendamento_id?: string;
 }
 
 interface Despesa {
   id: string;
   descricao: string;
   valor: number;
-  data: string;
+  data_transacao: string;
   categoria: string;
-  tipo: string;
-  forma_pagamento?: string;
+  forma_pagamento: string;
 }
 
 export default function Financeiro() {
-  const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
+  const [receitas, setReceitas] = useState<Receita[]>([]);
   const [despesas, setDespesas] = useState<Despesa[]>([]);
   const [dataInicio, setDataInicio] = useState<string>('');
   const [dataFim, setDataFim] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -37,23 +34,24 @@ export default function Financeiro() {
   const [formDespesa, setFormDespesa] = useState({
     descricao: '',
     valor: '',
-    data: new Date().toISOString().split('T')[0],
+    data_transacao: new Date().toISOString().split('T')[0],
     categoria: '',
-    forma_pagamento: 'Dinheiro',
+    forma_pagamento: 'dinheiro',
   });
 
-  // Função para normalizar forma de pagamento
+  // ✅ NORMALIZAR FORMA DE PAGAMENTO
   const normalizarFormaPagamento = (forma: string | null | undefined): string => {
     if (!forma) return '';
     const normalized = forma.toLowerCase().trim();
-    if (normalized === 'dinheiro') return 'Dinheiro';
-    if (normalized === 'pix') return 'Pix';
-    if (normalized === 'débito' || normalized === 'debito') return 'Débito';
-    if (normalized === 'crédito' || normalized === 'credito') return 'Crédito';
-    return forma;
+    // ✅ VALIDAR CONTRA AS PALAVRAS-CHAVE CORRETAS
+    if (normalized === 'dinheiro') return 'dinheiro';
+    if (normalized === 'pix') return 'pix';
+    if (normalized === 'débito' || normalized === 'debito') return 'débito';
+    if (normalized === 'crédito' || normalized === 'credito') return 'crédito';
+    return forma.toLowerCase();
   };
 
-  // Inicializar data início como primeiro dia do mês
+  // ✅ INICIALIZAR DATA INÍCIO COMO PRIMEIRO DIA DO MÊS
   useEffect(() => {
     const hoje = new Date();
     const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
@@ -62,150 +60,222 @@ export default function Financeiro() {
 
   useEffect(() => {
     if (dataInicio) {
-      carregarAgendamentos();
+      carregarReceitas();
       carregarDespesas();
     }
   }, [dataInicio, dataFim, filtroFormaPagamento]);
 
-  const carregarAgendamentos = async () => {
+  // ✅ CARREGAR RECEITAS COM FILTRO POR COMPANY_ID E DATAS CORRETAS
+  const carregarReceitas = async () => {
     setLoading(true);
     try {
-      let query = supabase
-        .from('agendamentos')
-        .select('*, clientes(nome), servicos(nome, preco)')
-        .eq('status', 'finalizado');
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        setLoading(false);
+        return;
+      }
 
+      console.log('🔍 Buscando receitas para company_id:', companyId);
+      console.log('📅 Período:', dataInicio, 'até', dataFim);
+
+      let query = supabase
+        .from('financeiro')
+        .select('*')
+        .eq('company_id', companyId)
+        .eq('tipo', 'receita');
+
+      // ✅ CORRIGIR FILTRO DE DATAS COM TIMESTAMP
       if (dataInicio) {
-        query = query.gte('data_agendamento', dataInicio);
+        query = query.gte('data_transacao', dataInicio + 'T00:00:00');
       }
 
       if (dataFim) {
-        query = query.lte('data_agendamento', dataFim);
+        query = query.lte('data_transacao', dataFim + 'T23:59:59');
       }
 
-      const { data, error } = await query.order('data_agendamento', { ascending: false });
+      const { data, error } = await query.order('data_transacao', { ascending: false });
 
-      if (error) throw error;
-      
+      if (error) {
+        console.error('❌ Erro ao carregar receitas:', error);
+        setErro('Erro ao carregar receitas');
+        setLoading(false);
+        return;
+      }
+
       let dataNormalizado = data?.map(d => ({
         ...d,
         forma_pagamento: normalizarFormaPagamento(d.forma_pagamento)
       })) || [];
-      
+
+      // ✅ FILTRAR POR FORMA DE PAGAMENTO (SÓ SE NÃO FOR 'TODOS')
       if (filtroFormaPagamento !== 'todos') {
-        dataNormalizado = dataNormalizado.filter(a => a.forma_pagamento === filtroFormaPagamento);
+        dataNormalizado = dataNormalizado.filter(r => r.forma_pagamento === filtroFormaPagamento);
       }
-      
-      setAgendamentos(dataNormalizado);
+
+      console.log('✅ Receitas carregadas:', dataNormalizado.length);
+      setReceitas(dataNormalizado);
     } catch (error) {
-      console.error('Erro ao carregar agendamentos:', error);
+      console.error('❌ Erro crítico ao carregar receitas:', error);
+      setErro('Erro ao carregar receitas');
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ CARREGAR DESPESAS COM FILTRO POR COMPANY_ID E DATAS CORRETAS
   const carregarDespesas = async () => {
     try {
-      let query = supabase
-        .from('despesas')
-        .select('*');
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        return;
+      }
 
+      console.log('🔍 Buscando despesas para company_id:', companyId);
+
+      let query = supabase
+        .from('financeiro')
+        .select('*')
+        .eq('company_id', companyId)
+        .eq('tipo', 'despesa');
+
+      // ✅ CORRIGIR FILTRO DE DATAS COM TIMESTAMP
       if (dataInicio) {
-        query = query.gte('data', dataInicio);
+        query = query.gte('data_transacao', dataInicio + 'T00:00:00');
       }
 
       if (dataFim) {
-        query = query.lte('data', dataFim);
+        query = query.lte('data_transacao', dataFim + 'T23:59:59');
       }
 
-      const { data, error } = await query.order('data', { ascending: false });
+      const { data, error } = await query.order('data_transacao', { ascending: false });
 
-      if (error) throw error;
-      
+      if (error) {
+        console.error('❌ Erro ao carregar despesas:', error);
+        return;
+      }
+
+      console.log('✅ Despesas carregadas:', data?.length || 0);
       setDespesas(data || []);
     } catch (error) {
-      console.error('Erro ao carregar despesas:', error);
+      console.error('❌ Erro crítico ao carregar despesas:', error);
     }
   };
 
+  // ✅ SALVAR DESPESA
   const handleSubmitDespesa = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro('');
 
-    if (!formDespesa.descricao || !formDespesa.valor || !formDespesa.data || !formDespesa.forma_pagamento) {
+    if (!formDespesa.descricao || !formDespesa.valor || !formDespesa.data_transacao || !formDespesa.forma_pagamento) {
       setErro('Preencha descrição, valor, data e forma de pagamento');
       return;
     }
 
     try {
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      console.log('💾 Salvando despesa...');
+
       if (editingDespesaId) {
-        // Atualizar
+        // ✅ ATUALIZAR
         const { error } = await supabase
-          .from('despesas')
+          .from('financeiro')
           .update({
             descricao: formDespesa.descricao,
             valor: parseFloat(formDespesa.valor),
-            data: formDespesa.data,
-            categoria: formDespesa.categoria,
+            data_transacao: formDespesa.data_transacao,
+            categoria: formDespesa.categoria || null,
             forma_pagamento: formDespesa.forma_pagamento,
           })
-          .eq('id', editingDespesaId);
+          .eq('id', editingDespesaId)
+          .eq('company_id', companyId);
 
         if (error) {
+          console.error('❌ Erro ao atualizar:', error);
           setErro('Erro ao atualizar despesa');
           return;
         }
+
+        console.log('✅ Despesa atualizada!');
       } else {
-        // Criar novo - garantir que a data seja salva corretamente
-        const dataParts = formDespesa.data.split('-');
-        const dataFormatada = `${dataParts[0]}-${dataParts[1]}-${dataParts[2]}`;
-        
-        const { error } = await supabase.from('despesas').insert([{
+        // ✅ CRIAR NOVO
+        const { error } = await supabase.from('financeiro').insert([{
+          company_id: companyId,
+          tipo: 'despesa',
           descricao: formDespesa.descricao,
           valor: parseFloat(formDespesa.valor),
-          data: dataFormatada,
-          categoria: formDespesa.categoria,
+          data_transacao: formDespesa.data_transacao,
+          categoria: formDespesa.categoria || null,
           forma_pagamento: formDespesa.forma_pagamento,
-          tipo: 'despesa',
         }]);
 
         if (error) {
+          console.error('❌ Erro ao criar:', error);
           setErro('Erro ao criar despesa');
           return;
         }
+
+        console.log('✅ Despesa criada!');
       }
 
       setFormDespesa({
         descricao: '',
         valor: '',
-        data: new Date().toISOString().split('T')[0],
+        data_transacao: new Date().toISOString().split('T')[0],
         categoria: '',
-        forma_pagamento: 'Dinheiro',
+        forma_pagamento: 'dinheiro',
       });
       setEditingDespesaId(null);
       setShowModalDespesa(false);
-      carregarDespesas();
+      setErro('');
+      await carregarDespesas();
     } catch (error) {
+      console.error('❌ Erro crítico:', error);
       setErro('Erro ao salvar despesa');
-      console.error(error);
     }
   };
 
+  // ✅ DELETAR DESPESA
   const handleDeleteDespesa = async (id: string) => {
     if (!window.confirm('Tem certeza que deseja deletar esta despesa?')) return;
 
     try {
-      const { error } = await supabase.from('despesas').delete().eq('id', id);
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      console.log('🗑️ Deletando despesa:', id);
+
+      const { error } = await supabase
+        .from('financeiro')
+        .delete()
+        .eq('id', id)
+        .eq('company_id', companyId);
 
       if (error) {
+        console.error('❌ Erro ao deletar:', error);
         setErro('Erro ao deletar despesa');
         return;
       }
 
-      carregarDespesas();
+      console.log('✅ Despesa deletada!');
+      setErro('');
+      setDespesas(despesas.filter(d => d.id !== id));
+      await carregarDespesas();
     } catch (error) {
+      console.error('❌ Erro crítico:', error);
       setErro('Erro ao deletar');
-      console.error(error);
     }
   };
 
@@ -213,56 +283,87 @@ export default function Financeiro() {
     setFormDespesa({
       descricao: despesa.descricao,
       valor: despesa.valor.toString(),
-      data: despesa.data,
+      data_transacao: despesa.data_transacao,
       categoria: despesa.categoria || '',
-      forma_pagamento: despesa.forma_pagamento || 'Dinheiro',
+      forma_pagamento: despesa.forma_pagamento || 'dinheiro',
     });
     setEditingDespesaId(despesa.id);
     setShowModalDespesa(true);
   };
 
-  // Cálculos
-  const totalGeral = agendamentos.reduce((sum, a) => sum + (a.servicos?.preco || 0), 0);
+  // ✅ CÁLCULOS
+  const totalReceita = receitas.reduce((sum, r) => sum + (r.valor || 0), 0);
   const totalDespesas = despesas.reduce((sum, d) => sum + (d.valor || 0), 0);
-  const saldoLiquido = totalGeral - totalDespesas;
+  const saldoLiquido = totalReceita - totalDespesas;
 
-  // Calcular totais por forma de pagamento (descontando despesas da forma escolhida)
+  // ✅ RECEITAS POR FORMA DE PAGAMENTO
   const totaisReceitasPorForma = {
-    Dinheiro: agendamentos
-      .filter(a => a.forma_pagamento === 'Dinheiro')
-      .reduce((sum, a) => sum + (a.servicos?.preco || 0), 0),
-    Pix: agendamentos
-      .filter(a => a.forma_pagamento === 'Pix')
-      .reduce((sum, a) => sum + (a.servicos?.preco || 0), 0),
-    Débito: agendamentos
-      .filter(a => a.forma_pagamento === 'Débito')
-      .reduce((sum, a) => sum + (a.servicos?.preco || 0), 0),
-    Crédito: agendamentos
-      .filter(a => a.forma_pagamento === 'Crédito')
-      .reduce((sum, a) => sum + (a.servicos?.preco || 0), 0),
+    dinheiro: receitas
+      .filter(r => r.forma_pagamento === 'dinheiro')
+      .reduce((sum, r) => sum + (r.valor || 0), 0),
+    pix: receitas
+      .filter(r => r.forma_pagamento === 'pix')
+      .reduce((sum, r) => sum + (r.valor || 0), 0),
+    débito: receitas
+      .filter(r => r.forma_pagamento === 'débito')
+      .reduce((sum, r) => sum + (r.valor || 0), 0),
+    crédito: receitas
+      .filter(r => r.forma_pagamento === 'crédito')
+      .reduce((sum, r) => sum + (r.valor || 0), 0),
   };
 
-  // Descontar despesas de cada forma de pagamento
+  // ✅ DESPESAS POR FORMA DE PAGAMENTO
   const despesasPorForma = {
-    Dinheiro: despesas
-      .filter(d => d.forma_pagamento === 'Dinheiro')
+    dinheiro: despesas
+      .filter(d => d.forma_pagamento === 'dinheiro')
       .reduce((sum, d) => sum + (d.valor || 0), 0),
-    Pix: despesas
-      .filter(d => d.forma_pagamento === 'Pix')
+    pix: despesas
+      .filter(d => d.forma_pagamento === 'pix')
       .reduce((sum, d) => sum + (d.valor || 0), 0),
-    Débito: despesas
-      .filter(d => d.forma_pagamento === 'Débito')
+    débito: despesas
+      .filter(d => d.forma_pagamento === 'débito')
       .reduce((sum, d) => sum + (d.valor || 0), 0),
-    Crédito: despesas
-      .filter(d => d.forma_pagamento === 'Crédito')
+    crédito: despesas
+      .filter(d => d.forma_pagamento === 'crédito')
       .reduce((sum, d) => sum + (d.valor || 0), 0),
   };
 
+  // ✅ TOTAIS POR FORMA (RECEITA - DESPESA)
   const totaisPorForma = {
-    Dinheiro: Math.max(0, totaisReceitasPorForma.Dinheiro - despesasPorForma.Dinheiro),
-    Pix: Math.max(0, totaisReceitasPorForma.Pix - despesasPorForma.Pix),
-    Débito: Math.max(0, totaisReceitasPorForma.Débito - despesasPorForma.Débito),
-    Crédito: Math.max(0, totaisReceitasPorForma.Crédito - despesasPorForma.Crédito),
+    dinheiro: Math.max(0, totaisReceitasPorForma.dinheiro - despesasPorForma.dinheiro),
+    pix: Math.max(0, totaisReceitasPorForma.pix - despesasPorForma.pix),
+    débito: Math.max(0, totaisReceitasPorForma.débito - despesasPorForma.débito),
+    crédito: Math.max(0, totaisReceitasPorForma.crédito - despesasPorForma.crédito),
+  };
+
+  const getFormaPagamentoColor = (forma: string) => {
+    switch (forma) {
+      case 'dinheiro':
+        return 'bg-green-100 text-green-700';
+      case 'pix':
+        return 'bg-blue-100 text-blue-700';
+      case 'débito':
+        return 'bg-amber-100 text-amber-700';
+      case 'crédito':
+        return 'bg-red-100 text-red-700';
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
+
+  const getFormaPagamentoEmoji = (forma: string) => {
+    switch (forma) {
+      case 'dinheiro':
+        return '💵';
+      case 'pix':
+        return '📱';
+      case 'débito':
+        return '💳';
+      case 'crédito':
+        return '💰';
+      default:
+        return '💸';
+    }
   };
 
   return (
@@ -273,29 +374,36 @@ export default function Financeiro() {
           <TrendingUp size={32} className="text-indigo-600" />
           <h1 className="text-3xl font-bold text-slate-800">Financeiro</h1>
         </div>
-        <p className="text-slate-500">Controle de pagamentos recebidos e despesas</p>
+        <p className="text-slate-500">Controle de receitas e despesas</p>
       </div>
 
+      {erro && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{erro}</p>
+        </div>
+      )}
+
       {/* Cards de Totais */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
-        {/* Total Geral */}
-        <div className="bg-white rounded-lg p-6 border border-slate-200 shadow-sm hover:shadow-md transition">
-          <p className="text-sm text-slate-600 mb-2">Total Receita</p>
-          <p className="text-3xl font-bold text-green-600">R$ {totalGeral.toFixed(2)}</p>
-          <p className="text-xs text-slate-500 mt-2">{agendamentos.length} pagamentos</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4 mb-8">
+        {/* Total Receita */}
+        <div className="bg-white rounded-lg p-6 border border-green-200 shadow-sm hover:shadow-md transition">
+          <p className="text-sm text-slate-600 mb-2">💰 Total Receita</p>
+          <p className="text-2xl font-bold text-green-600">R$ {totalReceita.toFixed(2)}</p>
+          <p className="text-xs text-slate-500 mt-2">{receitas.length} recebimentos</p>
         </div>
 
         {/* Total Despesas */}
         <div className="bg-white rounded-lg p-6 border border-red-200 shadow-sm hover:shadow-md transition">
           <p className="text-sm text-red-700 font-medium mb-2">💸 Despesas</p>
-          <p className="text-3xl font-bold text-red-600">R$ {totalDespesas.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-red-600">R$ {totalDespesas.toFixed(2)}</p>
           <p className="text-xs text-slate-500 mt-2">{despesas.length} despesas</p>
         </div>
 
         {/* Saldo Líquido */}
         <div className={`bg-white rounded-lg p-6 border shadow-sm hover:shadow-md transition ${saldoLiquido >= 0 ? 'border-green-200' : 'border-red-200'}`}>
-          <p className="text-sm text-slate-600 mb-2">Saldo Líquido</p>
-          <p className={`text-3xl font-bold ${saldoLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className="text-sm text-slate-600 mb-2">📊 Saldo Líquido</p>
+          <p className={`text-2xl font-bold ${saldoLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             R$ {saldoLiquido.toFixed(2)}
           </p>
         </div>
@@ -303,19 +411,25 @@ export default function Financeiro() {
         {/* Dinheiro */}
         <div className="bg-white rounded-lg p-6 border border-green-200 shadow-sm hover:shadow-md transition">
           <p className="text-sm text-green-700 font-medium mb-2">💵 Dinheiro</p>
-          <p className="text-3xl font-bold text-green-700">R$ {totaisPorForma.Dinheiro.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-green-700">R$ {totaisPorForma.dinheiro.toFixed(2)}</p>
         </div>
 
         {/* Pix */}
         <div className="bg-white rounded-lg p-6 border border-blue-200 shadow-sm hover:shadow-md transition">
           <p className="text-sm text-blue-700 font-medium mb-2">📱 Pix</p>
-          <p className="text-3xl font-bold text-blue-700">R$ {totaisPorForma.Pix.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-blue-700">R$ {totaisPorForma.pix.toFixed(2)}</p>
         </div>
 
         {/* Débito */}
         <div className="bg-white rounded-lg p-6 border border-amber-200 shadow-sm hover:shadow-md transition">
           <p className="text-sm text-amber-700 font-medium mb-2">💳 Débito</p>
-          <p className="text-3xl font-bold text-amber-700">R$ {totaisPorForma.Débito.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-amber-700">R$ {totaisPorForma.débito.toFixed(2)}</p>
+        </div>
+
+        {/* Crédito */}
+        <div className="bg-white rounded-lg p-6 border border-red-200 shadow-sm hover:shadow-md transition">
+          <p className="text-sm text-red-700 font-medium mb-2">💰 Crédito</p>
+          <p className="text-2xl font-bold text-red-700">R$ {totaisPorForma.crédito.toFixed(2)}</p>
         </div>
       </div>
 
@@ -329,7 +443,7 @@ export default function Financeiro() {
               type="date"
               value={dataInicio}
               onChange={(e) => setDataInicio(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
           <div>
@@ -338,7 +452,7 @@ export default function Financeiro() {
               type="date"
               value={dataFim}
               onChange={(e) => setDataFim(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
           <div>
@@ -346,13 +460,13 @@ export default function Financeiro() {
             <select
               value={filtroFormaPagamento}
               onChange={(e) => setFiltroFormaPagamento(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="todos">Todas</option>
-              <option value="Dinheiro">💵 Dinheiro</option>
-              <option value="Pix">📱 Pix</option>
-              <option value="Débito">💳 Débito</option>
-              <option value="Crédito">💰 Crédito</option>
+              <option value="dinheiro">💵 Dinheiro</option>
+              <option value="pix">📱 Pix</option>
+              <option value="débito">💳 Débito</option>
+              <option value="crédito">💰 Crédito</option>
             </select>
           </div>
           <div>
@@ -368,7 +482,7 @@ export default function Financeiro() {
         </div>
       </div>
 
-      {/* Tabela de Pagamentos */}
+      {/* Tabela de Receitas */}
       <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mb-8">
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
           <h3 className="text-lg font-semibold text-slate-800">Receitas</h3>
@@ -377,10 +491,8 @@ export default function Financeiro() {
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Cliente</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Serviço</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Descrição</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Data</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Hora</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Forma de Pagamento</th>
                 <th className="px-6 py-4 text-right text-sm font-semibold text-slate-700">Valor</th>
               </tr>
@@ -388,38 +500,30 @@ export default function Financeiro() {
             <tbody className="divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
                     Carregando...
                   </td>
                 </tr>
-              ) : agendamentos.length === 0 ? (
+              ) : receitas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
-                    Nenhum pagamento encontrado
+                  <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
+                    Nenhuma receita encontrada
                   </td>
                 </tr>
               ) : (
-                agendamentos.map((agendamento) => (
-                  <tr key={agendamento.id} className="hover:bg-slate-50 transition">
-                    <td className="px-6 py-4 text-sm text-slate-800">{agendamento.clientes?.nome || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-slate-800">{agendamento.servicos?.nome || '-'}</td>
+                receitas.map((receita) => (
+                  <tr key={receita.id} className="hover:bg-slate-50 transition">
+                    <td className="px-6 py-4 text-sm text-slate-800">{receita.descricao}</td>
                     <td className="px-6 py-4 text-sm text-slate-600">
-                      {new Date(agendamento.data_agendamento).toLocaleDateString('pt-BR')}
+                      {new Date(receita.data_transacao).toLocaleDateString('pt-BR')}
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-600">{agendamento.hora_agendamento}</td>
                     <td className="px-6 py-4 text-sm">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        agendamento.forma_pagamento === 'Dinheiro' ? 'bg-green-100 text-green-700' :
-                        agendamento.forma_pagamento === 'Pix' ? 'bg-blue-100 text-blue-700' :
-                        agendamento.forma_pagamento === 'Débito' ? 'bg-amber-100 text-amber-700' :
-                        agendamento.forma_pagamento === 'Crédito' ? 'bg-red-100 text-red-700' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
-                        {agendamento.forma_pagamento}
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getFormaPagamentoColor(receita.forma_pagamento)}`}>
+                        {getFormaPagamentoEmoji(receita.forma_pagamento)} {receita.forma_pagamento}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-right font-semibold text-slate-800">
-                      R$ {(agendamento.servicos?.preco || 0).toFixed(2)}
+                    <td className="px-6 py-4 text-sm text-right font-semibold text-green-600">
+                      R$ {receita.valor.toFixed(2)}
                     </td>
                   </tr>
                 ))
@@ -440,8 +544,8 @@ export default function Financeiro() {
               <tr>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Descrição</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Categoria</th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Descontado de</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Data</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Forma de Pagamento</th>
                 <th className="px-6 py-4 text-right text-sm font-semibold text-slate-700">Valor</th>
                 <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700">Ações</th>
               </tr>
@@ -449,7 +553,7 @@ export default function Financeiro() {
             <tbody className="divide-y divide-slate-200">
               {despesas.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                     Nenhuma despesa encontrada
                   </td>
                 </tr>
@@ -458,19 +562,13 @@ export default function Financeiro() {
                   <tr key={despesa.id} className="hover:bg-slate-50 transition">
                     <td className="px-6 py-4 text-sm text-slate-800">{despesa.descricao}</td>
                     <td className="px-6 py-4 text-sm text-slate-600">{despesa.categoria || '-'}</td>
-                    <td className="px-6 py-4 text-sm">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        despesa.forma_pagamento === 'Dinheiro' ? 'bg-green-100 text-green-700' :
-                        despesa.forma_pagamento === 'Pix' ? 'bg-blue-100 text-blue-700' :
-                        despesa.forma_pagamento === 'Débito' ? 'bg-amber-100 text-amber-700' :
-                        despesa.forma_pagamento === 'Crédito' ? 'bg-red-100 text-red-700' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
-                        {despesa.forma_pagamento || '-'}
-                      </span>
-                    </td>
                     <td className="px-6 py-4 text-sm text-slate-600">
-                      {despesa.data.split('-').reverse().join('/')}
+                      {new Date(despesa.data_transacao).toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getFormaPagamentoColor(despesa.forma_pagamento)}`}>
+                        {getFormaPagamentoEmoji(despesa.forma_pagamento)} {despesa.forma_pagamento}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-sm text-right font-semibold text-red-600">
                       -R$ {despesa.valor.toFixed(2)}
@@ -511,7 +609,13 @@ export default function Financeiro() {
                 onClick={() => {
                   setShowModalDespesa(false);
                   setEditingDespesaId(null);
-                  setFormDespesa({ descricao: '', valor: '', data: new Date().toISOString().split('T')[0], categoria: '' });
+                  setFormDespesa({
+                    descricao: '',
+                    valor: '',
+                    data_transacao: new Date().toISOString().split('T')[0],
+                    categoria: '',
+                    forma_pagamento: 'dinheiro'
+                  });
                 }}
                 className="text-slate-400 hover:text-slate-600"
               >
@@ -535,6 +639,7 @@ export default function Financeiro() {
                   onChange={(e) => setFormDespesa({...formDespesa, descricao: e.target.value})}
                   placeholder="Ex: Aluguel, Material..."
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
@@ -547,6 +652,7 @@ export default function Financeiro() {
                   onChange={(e) => setFormDespesa({...formDespesa, valor: e.target.value})}
                   placeholder="0.00"
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
@@ -554,9 +660,10 @@ export default function Financeiro() {
                 <label className="block text-sm font-medium text-slate-700 mb-2">Data</label>
                 <input 
                   type="date"
-                  value={formDespesa.data}
-                  onChange={(e) => setFormDespesa({...formDespesa, data: e.target.value})}
+                  value={formDespesa.data_transacao}
+                  onChange={(e) => setFormDespesa({...formDespesa, data_transacao: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 />
               </div>
 
@@ -572,16 +679,17 @@ export default function Financeiro() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Descontar de (Forma de Pagamento)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Forma de Pagamento</label>
                 <select
                   value={formDespesa.forma_pagamento}
                   onChange={(e) => setFormDespesa({...formDespesa, forma_pagamento: e.target.value})}
                   className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
                 >
-                  <option value="Dinheiro">💵 Dinheiro</option>
-                  <option value="Pix">📱 Pix</option>
-                  <option value="Débito">💳 Débito</option>
-                  <option value="Crédito">💰 Crédito</option>
+                  <option value="dinheiro">💵 Dinheiro</option>
+                  <option value="pix">📱 Pix</option>
+                  <option value="débito">💳 Débito</option>
+                  <option value="crédito">💰 Crédito</option>
                 </select>
               </div>
 
@@ -591,7 +699,13 @@ export default function Financeiro() {
                   onClick={() => {
                     setShowModalDespesa(false);
                     setEditingDespesaId(null);
-                    setFormDespesa({ descricao: '', valor: '', data: new Date().toISOString().split('T')[0], categoria: '' });
+                    setFormDespesa({
+                      descricao: '',
+                      valor: '',
+                      data_transacao: new Date().toISOString().split('T')[0],
+                      categoria: '',
+                      forma_pagamento: 'dinheiro'
+                    });
                   }}
                   className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors"
                 >

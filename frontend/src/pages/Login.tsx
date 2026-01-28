@@ -1,9 +1,18 @@
 import React, { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
+import axios from 'axios';
 
 interface LoginProps {
   onLoginSuccess: () => void;
+}
+
+interface Usuario {
+  id: string;
+  email: string;
+  role: 'admin' | 'empresa';
+  company_id?: string;
+  nome?: string;
 }
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
@@ -18,10 +27,10 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
-      // Buscar usuário no banco
+      // ✅ Buscar usuário com role
       const { data, error } = await supabase
         .from('usuarios')
-        .select('*')
+        .select('id, email, role, company_id, nome')
         .eq('email', email)
         .eq('senha', senha)
         .single();
@@ -31,12 +40,72 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      // Salvar dados do usuário no localStorage
-      localStorage.setItem('usuario', JSON.stringify(data));
-      localStorage.setItem('autenticado', 'true');
+      // ✅ Validar se role é válido
+      if (!['admin', 'empresa'].includes(data.role)) {
+        setErro('Erro: role inválido no banco de dados');
+        return;
+      }
 
-      console.log('Login bem-sucedido:', data);
+      // ✅ SE FOR EMPRESA, VERIFICAR SE ESTÁ ATIVA
+      if (data.role === 'empresa') {
+        console.log('🔍 Verificando se empresa está ativa...');
+        
+        try {
+          const resposta = await axios.get(
+            `http://localhost:3001/verify-company/${data.company_id}`
+          );
+
+          if (!resposta.data.ativa) {
+            console.error('❌ Empresa foi bloqueada');
+            setErro('🚫 Sua empresa foi desativada pelo administrador');
+            return;
+          }
+
+          console.log('✅ Empresa está ativa!');
+        } catch (error: any) {
+          if (error.response?.status === 403) {
+            console.error('❌ Empresa bloqueada pelo Super Admin');
+            setErro('🚫 Sua empresa foi desativada pelo administrador');
+            return;
+          } else {
+            console.error('❌ Erro ao verificar empresa:', error);
+            setErro('Erro ao verificar status da empresa. Tente novamente.');
+            return;
+          }
+        }
+      }
+
+      // ✅ Salvar dados do usuário no localStorage
+      const usuario: Usuario = {
+        id: data.id,
+        email: data.email,
+        role: data.role,
+        company_id: data.company_id,
+        nome: data.nome
+      };
+
+      localStorage.setItem('usuario', JSON.stringify(usuario));
+      localStorage.setItem('autenticado', 'true');
+      localStorage.setItem('userRole', data.role);
+      localStorage.setItem('companyId', data.company_id || '');
+
+      console.log('✅ Login bem-sucedido:', usuario);
+
+      // ✅ CALLBACK
       onLoginSuccess();
+
+      // ✅ REDIRECIONAR BASEADO NO ROLE
+      if (data.role === 'admin') {
+        console.log('🔐 Redirecionando para painel ADMIN');
+        setTimeout(() => {
+          window.location.href = '/admin/dashboard';
+        }, 500);
+      } else if (data.role === 'empresa') {
+        console.log('🏢 Redirecionando para painel EMPRESA');
+        setTimeout(() => {
+          window.location.href = '/dashboard';
+        }, 500);
+      }
     } catch (error) {
       setErro('Erro ao fazer login. Tente novamente.');
       console.error('Erro:', error);
@@ -54,7 +123,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <span className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">A</span>
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">AgendeZap</h1>
-          <p className="text-indigo-100">Sistema de Agendamento para Salões</p>
+          <p className="text-indigo-100">Sistema de Agendamento Multi-Empresa</p>
         </div>
 
         {/* Card de Login */}
@@ -81,6 +150,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   placeholder="seu@email.com"
                   className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   disabled={loading}
+                  required
                 />
               </div>
             </div>
@@ -97,6 +167,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   placeholder="••••••••"
                   className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   disabled={loading}
+                  required
                 />
               </div>
             </div>
@@ -111,12 +182,20 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             </button>
           </form>
 
-          {/* Dados de teste */}
+          {/* Credenciais de teste */}
           <div className="mt-6 pt-6 border-t border-slate-200">
-            <p className="text-xs text-slate-500 text-center mb-3">Credenciais de teste:</p>
-            <div className="bg-slate-50 p-3 rounded text-xs text-slate-600">
-              <p><strong>Email:</strong> admin@agendezap.com</p>
-              <p><strong>Senha:</strong> admin123</p>
+            <p className="text-xs text-slate-500 text-center mb-3">📋 Credenciais de teste:</p>
+            <div className="space-y-2 text-xs text-slate-600">
+              <div className="bg-blue-50 p-3 rounded border border-blue-200">
+                <p><strong>👤 Admin:</strong></p>
+                <p>Email: admin@agendezap.com</p>
+                <p>Senha: 123</p>
+              </div>
+              <div className="bg-green-50 p-3 rounded border border-green-200">
+                <p><strong>🏢 Empresa:</strong></p>
+                <p>Email: dombarao@admin.com</p>
+                <p>Senha: 123</p>
+              </div>
             </div>
           </div>
         </div>

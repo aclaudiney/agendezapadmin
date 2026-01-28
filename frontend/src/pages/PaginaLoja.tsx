@@ -10,6 +10,7 @@ const PaginaLoja: React.FC = () => {
   const [sucesso, setSucesso] = useState(false);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [imagemUrl, setImagemUrl] = useState<string>('');
+  const [configId, setConfigId] = useState<string>('');
 
   const [formData, setFormData] = useState({
     descricao_loja: '',
@@ -26,35 +27,62 @@ const PaginaLoja: React.FC = () => {
     fetchConfig();
   }, []);
 
+  // ✅ BUSCAR CONFIGURAÇÃO COM FILTRO POR COMPANY_ID
   const fetchConfig = async () => {
     try {
       setLoading(true);
+      setErro('');
+
+      // ✅ PEGAR COMPANY_ID DO LOCALSTORAGE
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        setLoading(false);
+        return;
+      }
+
+      console.log('🔍 Buscando configurações para company_id:', companyId);
+
+      // ✅ BUSCAR APENAS DA EMPRESA ATUAL
       const { data, error } = await supabase
         .from('configuracoes')
         .select('*')
-        .limit(1);
+        .eq('company_id', companyId)
+        .single();
 
-      if (data && data.length > 0) {
-        const config = data[0];
-        console.log('Dados carregados:', config);
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = nenhum resultado encontrado (não é erro)
+        console.error('❌ Erro ao buscar:', error);
+        setErro('Erro ao carregar configurações');
+        setLoading(false);
+        return;
+      }
+
+      if (data) {
+        console.log('✅ Configurações carregadas:', data);
+        setConfigId(data.id);
         setFormData({
-          descricao_loja: config.descricao_loja || '',
-          cor_tema: config.cor_tema || '#6366f1',
-          imagem_capa: config.imagem_capa || '',
-          facebook_url: config.facebook_url || '',
-          instagram_url: config.instagram_url || '',
-          linkedin_url: config.linkedin_url || '',
-          tiktok_url: config.tiktok_url || '',
-          youtube_url: config.youtube_url || '',
+          descricao_loja: data.descricao_loja || '',
+          cor_tema: data.cor_tema || '#6366f1',
+          imagem_capa: data.imagem_capa || '',
+          facebook_url: data.facebook_url || '',
+          instagram_url: data.instagram_url || '',
+          linkedin_url: data.linkedin_url || '',
+          tiktok_url: data.tiktok_url || '',
+          youtube_url: data.youtube_url || '',
         });
-        if (config.imagem_capa) {
-          setImagemUrl(config.imagem_capa);
-          setImagePreview(config.imagem_capa);
+        if (data.imagem_capa) {
+          setImagemUrl(data.imagem_capa);
+          setImagePreview(data.imagem_capa);
         }
+      } else {
+        console.log('ℹ️ Nenhuma configuração encontrada - criar nova');
+        setConfigId('');
       }
     } catch (error) {
-      console.error('Erro ao carregar:', error);
-      setErro('Erro ao carregar dados');
+      console.error('❌ Erro crítico ao carregar:', error);
+      setErro('Erro ao carregar configurações');
     } finally {
       setLoading(false);
     }
@@ -76,18 +104,27 @@ const PaginaLoja: React.FC = () => {
       setUploadingImage(true);
       setErro('');
 
-      // Validar tamanho (máx 5MB)
+      // ✅ VALIDAR TAMANHO (máx 5MB)
       if (file.size > 5 * 1024 * 1024) {
         setErro('Imagem muito grande (máximo 5MB)');
         setUploadingImage(false);
         return;
       }
 
-      // Gerar nome único para a imagem
-      const timestamp = Date.now();
-      const fileName = `capa-loja-${timestamp}.${file.name.split('.').pop()}`;
+      const companyId = localStorage.getItem('companyId');
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        setUploadingImage(false);
+        return;
+      }
 
-      // Upload para Supabase Storage
+      // ✅ GERAR NOME ÚNICO COM COMPANY_ID
+      const timestamp = Date.now();
+      const fileName = `${companyId}/capa-loja-${timestamp}.${file.name.split('.').pop()}`;
+
+      console.log('📤 Fazendo upload:', fileName);
+
+      // ✅ UPLOAD PARA SUPABASE STORAGE
       const { data, error: uploadError } = await supabase.storage
         .from('loja-imagens')
         .upload(fileName, file, {
@@ -96,21 +133,21 @@ const PaginaLoja: React.FC = () => {
         });
 
       if (uploadError) {
-        console.error('Erro upload:', uploadError);
+        console.error('❌ Erro upload:', uploadError);
         setErro('Erro ao fazer upload da imagem: ' + uploadError.message);
         setUploadingImage(false);
         return;
       }
 
-      // Obter URL pública da imagem
+      // ✅ OBTER URL PÚBLICA DA IMAGEM
       const { data: publicUrlData } = supabase.storage
         .from('loja-imagens')
         .getPublicUrl(fileName);
 
       const publicUrl = publicUrlData.publicUrl;
-      console.log('URL pública:', publicUrl);
+      console.log('✅ URL pública:', publicUrl);
 
-      // Atualizar preview e URL
+      // ✅ ATUALIZAR PREVIEW E URL
       setImagePreview(publicUrl);
       setImagemUrl(publicUrl);
       setFormData(prev => ({
@@ -120,7 +157,7 @@ const PaginaLoja: React.FC = () => {
 
       setErro('');
     } catch (error: any) {
-      console.error('Erro ao fazer upload:', error);
+      console.error('❌ Erro ao fazer upload:', error);
       setErro('Erro ao fazer upload da imagem: ' + error.message);
     } finally {
       setUploadingImage(false);
@@ -139,6 +176,7 @@ const PaginaLoja: React.FC = () => {
     }
   };
 
+  // ✅ SALVAR CONFIGURAÇÕES COM COMPANY_ID
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro('');
@@ -147,10 +185,14 @@ const PaginaLoja: React.FC = () => {
     try {
       setSaving(true);
 
-      const { data: existingData } = await supabase
-        .from('configuracoes')
-        .select('id')
-        .limit(1);
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      console.log('💾 Salvando configurações...');
 
       const dadosParaSalvar = {
         descricao_loja: formData.descricao_loja,
@@ -163,34 +205,54 @@ const PaginaLoja: React.FC = () => {
         youtube_url: formData.youtube_url,
       };
 
-      if (existingData && existingData.length > 0) {
+      if (configId) {
+        // ✅ ATUALIZAR EXISTENTE
+        console.log('🔄 Atualizando configuração:', configId);
+        
         const { error } = await supabase
           .from('configuracoes')
           .update(dadosParaSalvar)
-          .eq('id', existingData[0].id);
+          .eq('id', configId)
+          .eq('company_id', companyId);
 
         if (error) {
-          console.error('Erro:', error);
+          console.error('❌ Erro ao atualizar:', error);
           setErro('Erro ao salvar: ' + error.message);
           return;
         }
+
+        console.log('✅ Configuração atualizada!');
       } else {
-        const { error } = await supabase
+        // ✅ CRIAR NOVO
+        console.log('✨ Criando nova configuração');
+        
+        const { data, error } = await supabase
           .from('configuracoes')
-          .insert([dadosParaSalvar]);
+          .insert([{
+            company_id: companyId,
+            ...dadosParaSalvar,
+            created_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
 
         if (error) {
-          console.error('Erro:', error);
+          console.error('❌ Erro ao criar:', error);
           setErro('Erro ao salvar: ' + error.message);
           return;
+        }
+
+        if (data) {
+          setConfigId(data.id);
+          console.log('✅ Configuração criada:', data.id);
         }
       }
 
       setSucesso(true);
       setTimeout(() => setSucesso(false), 3000);
     } catch (error: any) {
+      console.error('❌ Erro crítico:', error);
       setErro('Erro ao salvar: ' + error.message);
-      console.error(error);
     } finally {
       setSaving(false);
     }
@@ -459,6 +521,7 @@ const PaginaLoja: React.FC = () => {
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
               <h4 className="font-semibold text-amber-900 mb-2">ℹ️ Informações Importantes</h4>
               <ul className="text-sm text-amber-800 space-y-1">
+                <li>✓ Cada empresa tem sua própria configuração separada</li>
                 <li>✓ A imagem de capa será salva permanentemente no Supabase Storage</li>
                 <li>✓ A cor do tema será aplicada nos botões e destaques</li>
                 <li>✓ As redes sociais aparecerão com ícones clicáveis</li>
@@ -472,7 +535,7 @@ const PaginaLoja: React.FC = () => {
               <button
                 type="submit"
                 disabled={saving}
-                className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold rounded-lg hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold rounded-lg hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save size={20} />
                 {saving ? 'Salvando...' : 'Salvar Alterações'}

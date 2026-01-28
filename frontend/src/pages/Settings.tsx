@@ -56,14 +56,34 @@ const Settings: React.FC = () => {
   const fetchConfig = async () => {
     try {
       setLoading(true);
+      
+      // ✅ PEGAR company_id DO USUÁRIO LOGADO
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Erro: company_id não encontrado. Faça login novamente.');
+        setLoading(false);
+        return;
+      }
+
+      console.log('🔍 Buscando configurações para company_id:', companyId);
+
       const { data, error } = await supabase
         .from('configuracoes')
         .select('*')
-        .limit(1);
+        .eq('company_id', companyId)  // ← FILTRAR PELO company_id DO USUÁRIO
+        .single();  // ← Retorna um único registro
 
-      if (data && data.length > 0) {
-        const config = data[0];
-        console.log('Dados carregados do Supabase:', config);
+      if (error) {
+        console.error('Erro ao buscar:', error);
+        setErro('Erro ao carregar configurações');
+        setLoading(false);
+        return;
+      }
+
+      if (data) {
+        const config = data;
+        console.log('✅ Dados carregados:', config.nome_estabelecimento, `(${companyId})`);
         setFormData({
           nome_estabelecimento: config.nome_estabelecimento || '',
           email_estabelecimento: config.email_estabelecimento || '',
@@ -109,9 +129,7 @@ const Settings: React.FC = () => {
     }));
   };
 
-  // Função para buscar CEP via ViaCEP
   const buscarCep = async (cep: string) => {
-    // Remove caracteres não numéricos
     const cepLimpo = cep.replace(/\D/g, '');
 
     if (cepLimpo.length !== 8) {
@@ -186,15 +204,19 @@ const Settings: React.FC = () => {
     try {
       setSaving(true);
 
-      // Montar endereço completo
+      // ✅ PEGAR company_id
+      const companyId = localStorage.getItem('companyId');
+      
+      if (!companyId) {
+        setErro('Erro: company_id não encontrado');
+        setSaving(false);
+        return;
+      }
+
       const enderecoCompleto = `${formData.rua}${formData.numero ? ', ' + formData.numero : ''}${formData.cidade ? ' - ' + formData.cidade : ''}`;
 
-      const { data: existingData } = await supabase
-        .from('configuracoes')
-        .select('id')
-        .limit(1);
-
       const dadosParaSalvar = {
+        company_id: companyId,  // ← INCLUIR company_id
         nome_estabelecimento: formData.nome_estabelecimento,
         email_estabelecimento: formData.email_estabelecimento,
         telefone_estabelecimento: formData.telefone_estabelecimento,
@@ -215,27 +237,16 @@ const Settings: React.FC = () => {
         horario_domingo: formData.horario_domingo,
       };
 
-      if (existingData && existingData.length > 0) {
-        const { error } = await supabase
-          .from('configuracoes')
-          .update(dadosParaSalvar)
-          .eq('id', existingData[0].id);
+      // ✅ UPDATE pelo company_id (não pela primeira linha)
+      const { error } = await supabase
+        .from('configuracoes')
+        .update(dadosParaSalvar)
+        .eq('company_id', companyId);
 
-        if (error) {
-          console.error('Erro:', error);
-          setErro('Erro ao salvar configurações: ' + error.message);
-          return;
-        }
-      } else {
-        const { error } = await supabase
-          .from('configuracoes')
-          .insert([dadosParaSalvar]);
-
-        if (error) {
-          console.error('Erro:', error);
-          setErro('Erro ao salvar configurações: ' + error.message);
-          return;
-        }
+      if (error) {
+        console.error('Erro:', error);
+        setErro('Erro ao salvar configurações: ' + error.message);
+        return;
       }
 
       setSucesso(true);
