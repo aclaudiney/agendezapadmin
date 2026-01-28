@@ -1,8 +1,8 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import 'dotenv/config';
 import { connectToWhatsApp, initAllSessions, desconectarWhatsApp } from './whatsapp.js';
-import { db, supabase } from './supabase'; // REMOVI O .ts
+import { db, supabase } from './supabase.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
@@ -10,6 +10,11 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+
+// ✅ INTERFACE CUSTOMIZADA PARA REQUEST
+interface CustomRequest extends Request {
+  empresa?: any;
+}
 
 // ✅ FUNÇÃO GERAR SLUG
 const gerarSlug = (nome: string): string => {
@@ -28,7 +33,7 @@ const gerarSlug = (nome: string): string => {
 // 🔐 MIDDLEWARE - VERIFICAR SE EMPRESA ESTÁ ATIVA
 // ============================================
 
-const verificarEmpresaAtiva = async (req: any, res: any, next: any) => {
+const verificarEmpresaAtiva = async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { companyId } = req.params;
   
   if (!companyId) {
@@ -62,7 +67,7 @@ const verificarEmpresaAtiva = async (req: any, res: any, next: any) => {
 // ✅ ROTA VERIFICAR SE EMPRESA ESTÁ ATIVA
 // ============================================
 
-app.get('/verify-company/:companyId', async (req, res) => {
+app.get('/verify-company/:companyId', async (req: Request, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -105,7 +110,7 @@ app.get('/verify-company/:companyId', async (req, res) => {
 // ============================================
 
 // ✅ INICIAR CONEXÃO WHATSAPP
-app.post('/whatsapp/connect/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.post('/whatsapp/connect/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -126,7 +131,7 @@ app.post('/whatsapp/connect/:companyId', verificarEmpresaAtiva, async (req, res)
 });
 
 // ✅ VERIFICAR STATUS DA CONEXÃO
-app.get('/whatsapp/status/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.get('/whatsapp/status/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -151,7 +156,7 @@ app.get('/whatsapp/status/:companyId', verificarEmpresaAtiva, async (req, res) =
 });
 
 // ✅ DESCONECTAR WHATSAPP (LOGOUT)
-app.post('/whatsapp/logout/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.post('/whatsapp/logout/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -171,7 +176,7 @@ app.post('/whatsapp/logout/:companyId', verificarEmpresaAtiva, async (req, res) 
 });
 
 // ROTAS ANTIGAS (mantidas para compatibilidade)
-app.post('/connect/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.post('/connect/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const { name } = req.body;
 
@@ -189,7 +194,7 @@ app.post('/connect/:companyId', verificarEmpresaAtiva, async (req, res) => {
     }
 });
 
-app.post('/disconnect/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.post('/disconnect/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -203,7 +208,7 @@ app.post('/disconnect/:companyId', verificarEmpresaAtiva, async (req, res) => {
     }
 });
 
-app.get('/session/:companyId', verificarEmpresaAtiva, async (req, res) => {
+app.get('/session/:companyId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -231,7 +236,7 @@ app.get('/session/:companyId', verificarEmpresaAtiva, async (req, res) => {
 // 🏢 ROTAS SUPERADMIN - EMPRESAS
 // ============================================
 
-app.get('/admin/companies', async (req, res) => {
+app.get('/admin/companies', async (req: Request, res: Response) => {
     try {
         const companies = await db.listarEmpresas();
         
@@ -256,7 +261,7 @@ app.get('/admin/companies', async (req, res) => {
     }
 });
 
-app.get('/admin/companies/:companyId', async (req, res) => {
+app.get('/admin/companies/:companyId', async (req: Request, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -296,7 +301,7 @@ app.get('/admin/companies/:companyId', async (req, res) => {
 });
 
 // ✅ CRIAR NOVA EMPRESA - COM USUÁRIO E CREDENCIAIS
-app.post('/admin/companies', async (req, res) => {
+app.post('/admin/companies', async (req: Request, res: Response) => {
     const { nome, descricao, whatsappNumber } = req.body;
 
     try {
@@ -389,7 +394,7 @@ app.post('/admin/companies', async (req, res) => {
     }
 });
 
-app.put('/admin/companies/:companyId', async (req, res) => {
+app.put('/admin/companies/:companyId', async (req: Request, res: Response) => {
     const { companyId } = req.params;
     const { nome, descricao, whatsappNumber, active } = req.body;
 
@@ -417,7 +422,7 @@ app.put('/admin/companies/:companyId', async (req, res) => {
 });
 
 // ✅ DELETAR EMPRESA - DELETA USUÁRIOS PRIMEIRO
-app.delete('/admin/companies/:companyId', async (req, res) => {
+app.delete('/admin/companies/:companyId', async (req: Request, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -472,7 +477,7 @@ app.delete('/admin/companies/:companyId', async (req, res) => {
 // ⚙️ ROTAS CONFIGURAÇÃO (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/config', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/config', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -488,7 +493,7 @@ app.get('/companies/:companyId/config', verificarEmpresaAtiva, async (req, res) 
     }
 });
 
-app.put('/companies/:companyId/config', verificarEmpresaAtiva, async (req, res) => {
+app.put('/companies/:companyId/config', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const configuracao = req.body;
 
@@ -513,7 +518,7 @@ app.put('/companies/:companyId/config', verificarEmpresaAtiva, async (req, res) 
 // 🤖 ROTAS CONFIGURAÇÃO DE AGENTE (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -529,7 +534,7 @@ app.get('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req,
     }
 });
 
-app.put('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req, res) => {
+app.put('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const { nomeAgente, prompt } = req.body;
 
@@ -558,7 +563,7 @@ app.put('/companies/:companyId/agent-config', verificarEmpresaAtiva, async (req,
 // 👥 ROTAS CLIENTES (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/clientes', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/clientes', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -569,7 +574,7 @@ app.get('/companies/:companyId/clientes', verificarEmpresaAtiva, async (req, res
     }
 });
 
-app.get('/companies/:companyId/clientes/:clienteId', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/clientes/:clienteId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId, clienteId } = req.params;
 
     try {
@@ -589,7 +594,7 @@ app.get('/companies/:companyId/clientes/:clienteId', verificarEmpresaAtiva, asyn
 // 👔 ROTAS PROFISSIONAIS (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -600,7 +605,7 @@ app.get('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (req
     }
 });
 
-app.post('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (req, res) => {
+app.post('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const { nome, telefone, especialidade } = req.body;
 
@@ -629,7 +634,7 @@ app.post('/companies/:companyId/profissionais', verificarEmpresaAtiva, async (re
 // 🔧 ROTAS SERVIÇOS (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
 
     try {
@@ -640,7 +645,7 @@ app.get('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req, res
     }
 });
 
-app.post('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req, res) => {
+app.post('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const { nome, preco, duracao } = req.body;
 
@@ -669,7 +674,7 @@ app.post('/companies/:companyId/servicos', verificarEmpresaAtiva, async (req, re
 // 📅 ROTAS AGENDAMENTOS (MULTI-TENANT)
 // ============================================
 
-app.get('/companies/:companyId/agendamentos', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/agendamentos', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId } = req.params;
     const { profissionalId, clienteId, data, status } = req.query;
 
@@ -688,7 +693,7 @@ app.get('/companies/:companyId/agendamentos', verificarEmpresaAtiva, async (req,
     }
 });
 
-app.get('/companies/:companyId/agendamentos/:agendamentoId', verificarEmpresaAtiva, async (req, res) => {
+app.get('/companies/:companyId/agendamentos/:agendamentoId', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId, agendamentoId } = req.params;
 
     try {
@@ -704,7 +709,7 @@ app.get('/companies/:companyId/agendamentos/:agendamentoId', verificarEmpresaAti
     }
 });
 
-app.post('/companies/:companyId/agendamentos/:agendamentoId/cancel', verificarEmpresaAtiva, async (req, res) => {
+app.post('/companies/:companyId/agendamentos/:agendamentoId/cancel', verificarEmpresaAtiva, async (req: CustomRequest, res: Response) => {
     const { companyId, agendamentoId } = req.params;
 
     try {

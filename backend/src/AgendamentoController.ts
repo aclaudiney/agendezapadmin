@@ -1,5 +1,5 @@
-import { db, supabase } from "./supabase.ts";
-import { gerarRespostaIA } from "./aiService.ts";
+import { db, supabase } from "./supabase.js";
+import { gerarRespostaIA } from "./aiService.js";
 
 export const processarFluxoAgendamento = async (texto: string, telefone: string, companyId: string) => {
     try {
