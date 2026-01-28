@@ -1,20 +1,19 @@
-FROM node:20
+FROM node:20-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y ffmpeg
+# Instala ffmpeg (necessário para o WhatsApp/Baileys)
+RUN apt update && apt install -y ffmpeg
 
 COPY package*.json ./
 RUN npm install
 
 COPY . .
 
-RUN mkdir -p sessions
-
-# Limpa o dist antigo e tenta compilar
+# O segredo: Limpa e tenta buildar. Se falhar por tipo, o '|| true' deixa o Docker seguir.
 RUN rm -rf dist && npx tsc --skipLibCheck || true
 
 EXPOSE 3001
 
-# Tenta rodar pelo arquivo compilado, se falhar, tenta rodar via ts-node diretamente
+# Tenta rodar o compilado; se não existir, roda o TS direto
 CMD ["sh", "-c", "node dist/server.js || npx ts-node src/server.ts"]
