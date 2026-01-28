@@ -1,21 +1,20 @@
-FROM node:20-slim
+FROM node:20
 
 WORKDIR /app
 
-# Copia arquivos de dependência
-COPY package*.json ./
+# Instala dependências de sistema necessárias para o Baileys/Canvas (opcional mas seguro)
+RUN apt-get update && apt-get install -y ffmpeg
 
-# Instala dependências
+COPY package*.json ./
 RUN npm install
 
-# Copia o restante do código
 COPY . .
 
-# Força a compilação do TypeScript para gerar a pasta dist
+# Cria a pasta de sessões para garantir que o Docker tenha permissão de escrita
+RUN mkdir -p sessions
+
 RUN npm run build
 
-# Expõe a porta
 EXPOSE 3001
 
-# Comando para iniciar o servidor
 CMD ["npm", "run", "start"]
