@@ -2,19 +2,21 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Instala ffmpeg e dependências básicas
+# Instala ffmpeg
 RUN apt update && apt install -y ffmpeg
 
 COPY package*.json ./
-# Instala o ts-node globalmente para não ter erro de comando
-RUN npm install && npm install -g ts-node typescript
+# Instalamos o esbuild que é 100x mais rápido e ignora erros de tipo
+RUN npm install && npm install -g esbuild
 
 COPY . .
 
 RUN mkdir -p sessions
 
-# Expõe a porta que você configurou no Easypanel
+# Compila o código transformando TS em JS de forma bruta (ignora erros de tipo)
+RUN npx esbuild src/server.ts --bundle --platform=node --outfile=dist/server.js --external:fsevents --external:canvas --external:ffmpeg-static
+
 EXPOSE 3001
 
-# O segredo está aqui: usamos o loader do ts-node para o Node entender arquivos .ts
-CMD ["node", "--loader", "ts-node/esm", "src/server.ts"]
+# Agora rodamos o arquivo JS puro, sem loaders experimentais
+CMD ["node", "dist/server.js"]
