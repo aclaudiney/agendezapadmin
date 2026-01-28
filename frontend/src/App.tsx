@@ -126,16 +126,16 @@ const App: React.FC = () => {
   // ============================================
   // 🔴 VERIFICAR ROTAS PÚBLICAS PRIMEIRO!
   // ============================================
-  // ✅ ISSO DEVE VIR ANTES DE QUALQUER VERIFICAÇÃO!
-  // Funciona MESMO QUE O USUÁRIO ESTEJA LOGADO!
 
   // ✅ DETECTAR ROTA PÚBLICA: /studio-takata, /agendar/studio-takata, etc
+  // ✅ EXCLUIR ROTAS ADMINISTRATIVAS: /dashboard, /admin/dashboard, /login, /login-cliente, /meu-agendamento, etc
   const isPublicBooking = pathname.startsWith('/agendar/') || 
                           (pathname !== '/' && 
                            pathname !== '/login' && 
                            pathname !== '/login-cliente' && 
                            pathname !== '/meu-agendamento' && 
                            pathname !== '/admin/dashboard' &&
+                           pathname !== '/dashboard' &&
                            /^\/[a-z0-9-]+$/.test(pathname));
 
   if (isPublicBooking) {
@@ -155,11 +155,24 @@ const App: React.FC = () => {
 
   // ✅ ROTA: /meu-agendamento
   if (pathname === '/meu-agendamento') {
-    if (!clienteLogado) {
+    const clienteSalvo = localStorage.getItem('clienteLogado');
+    
+    if (!clienteSalvo) {
+      // Não tem cliente no localStorage, redireciona para login
+      console.warn('❌ Sem cliente no localStorage, redirecionando para login');
       window.location.href = '/login-cliente';
       return null;
     }
-    return <ClientDashboard clienteId={clienteLogado.id} onLogout={handleClientLogout} />;
+
+    try {
+      const clienteData = JSON.parse(clienteSalvo);
+      console.log('✅ ClientDashboard carregando com cliente:', clienteData.nome);
+      return <ClientDashboard clienteId={clienteData.id} onLogout={handleClientLogout} />;
+    } catch (error) {
+      console.error('Erro ao parsear cliente:', error);
+      window.location.href = '/login-cliente';
+      return null;
+    }
   }
 
   // ============================================
