@@ -27,23 +27,18 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>();
-
-// ✅ AJUSTE NO CAMINHO: No Docker, a pasta sessions fica na raiz do app (/app/sessions)
 const baseDocsPath = path.resolve(__dirname, '..', 'sessions');
-
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 const updateDatabaseStatus = async (companyId: string, status: string, qr: string | null = null) => {
     try {
         await supabase.from('whatsapp_sessions').upsert({ 
-            company_id: companyId, 
-            status: status, 
-            qr_code: qr, 
-            updated_at: new Date() 
+            company_id: companyId, status: status, qr_code: qr, updated_at: new Date() 
         }, { onConflict: 'company_id' });
     } catch (err) { console.error("Erro banco:", err); }
 };
 
+// --- FUNÇÃO DE DESCONECTAR (LIMPEZA TOTAL) ---
 export const desconectarWhatsApp = async (companyId: string) => {
     console.log(`\n⚠️ [${companyId}] Solicitando desconexão total...`);
     const session = sessions.get(companyId);
@@ -52,20 +47,20 @@ export const desconectarWhatsApp = async (companyId: string) => {
         try {
             await session.sock.logout();
             session.sock.end(undefined);
-        } catch (e) { /* ignore */ }
+        } catch (e) { /* já fechado */ }
     }
 
     sessions.delete(companyId);
 
+    // LIMPA A PASTA DE SESSÃO (Para o QR Code vir novo na próxima)
     const companyPath = path.join(baseDocsPath, companyId);
     if (fs.existsSync(companyPath)) {
-        // ✅ USANDO rmSync com force para garantir limpeza no Linux
         fs.rmSync(companyPath, { recursive: true, force: true });
         console.log(`🗑️ Pasta de sessão de ${companyId} removida.`);
     }
 
     await updateDatabaseStatus(companyId, 'disconnected', null);
-    console.log(`✅ [${companyId}] Desconectado.`);
+    console.log(`✅ [${companyId}] Desconectado e pronto para nova conexão.`);
 };
 
 export const connectToWhatsApp = async (companyId: string, companyName: string = "Empresa") => {
@@ -74,16 +69,14 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
     const companyPath = path.join(baseDocsPath, companyId);
     if (!fs.existsSync(companyPath)) fs.mkdirSync(companyPath, { recursive: true });
 
-    // ✅ O Baileys vai salvar os arquivos JSON aqui dentro
     const { state, saveCreds } = await useMultiFileAuthState(companyPath);
-    
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
         browser: [`AgendeZap - ${companyId}`, 'Chrome', '1.0.0'],
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 30000, // ✅ Aumentado para manter conexão estável
+        keepAliveIntervalMs: 10000,
     });
 
     sessions.set(companyId, { sock, qr: null, status: 'connecting' });
@@ -110,10 +103,9 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
 
             if (shouldReconnect) {
                 console.log(`🔄 [${companyName}] Conexão fechada (${statusCode}). Reconectando...`);
-                // ✅ Pequeno delay antes de reconectar para não sobrecarregar o CPU
-                setTimeout(() => connectToWhatsApp(companyId, companyName), 5000);
+                connectToWhatsApp(companyId, companyName);
             } else {
-                console.log(`🚫 [${companyName}] Desconectado pelo usuário.`);
+                console.log(`🚫 [${companyName}] Desconectado pelo usuário. Não reconectando.`);
                 await desconectarWhatsApp(companyId);
             }
         }
@@ -147,18 +139,17 @@ export const initAllSessions = async () => {
         .eq('active', true);
 
     if (error) {
-        console.error("❌ Erro ao buscar empresas:", error);
+        console.error("❌ Erro ao buscar empresas no Supabase:", error);
         return;
     }
 
     if (companies && companies.length > 0) {
-        console.log(`\n🔄 Restaurando ${companies.length} instâncias...`);
-        // ✅ Aumentamos o delay para 3 segundos entre empresas para o servidor não "engasgar" no boot
+        console.log(`🔄 Restaurando ${companies.length} instâncias...`);
         for (const c of companies) {
-            await delay(3000); 
+            await delay(1500);
             connectToWhatsApp(c.id, c.name);
         }
     } else {
-        console.log("⚠️ Nenhuma empresa ativa encontrada.");
+        console.log("⚠️ Nenhuma empresa ativa encontrada para conectar.");
     }
 };
