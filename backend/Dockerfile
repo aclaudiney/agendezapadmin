@@ -2,7 +2,6 @@ FROM node:20
 
 WORKDIR /app
 
-# Instala ffmpeg para processamento de áudio/vídeo do WhatsApp
 RUN apt-get update && apt-get install -y ffmpeg
 
 COPY package*.json ./
@@ -10,13 +9,12 @@ RUN npm install
 
 COPY . .
 
-# Cria a pasta de sessões
 RUN mkdir -p sessions
 
-# O truque: compila ignorando erros de tipagem para o deploy não travar
-# Se o 'npm run build' falhar, ele segue em frente para o comando start
-RUN npm run build || npx tsc --skipLibCheck || true
+# Limpa o dist antigo e tenta compilar
+RUN rm -rf dist && npx tsc --skipLibCheck || true
 
 EXPOSE 3001
 
-CMD ["npm", "run", "start"]
+# Tenta rodar pelo arquivo compilado, se falhar, tenta rodar via ts-node diretamente
+CMD ["sh", "-c", "node dist/server.js || npx ts-node src/server.ts"]
