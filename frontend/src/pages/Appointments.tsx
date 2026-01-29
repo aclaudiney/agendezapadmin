@@ -20,6 +20,11 @@ const Appointments: React.FC = () => {
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<any>(null);
   const [formaPagamento, setFormaPagamento] = useState('');
 
+  // Estado para edição de profissional
+  const [showEditProfissionalModal, setShowEditProfissionalModal] = useState(false);
+  const [agendamentoEditandoProfissional, setAgendamentoEditandoProfissional] = useState<any>(null);
+  const [novoProfissionalId, setNovoProfissionalId] = useState('');
+
   // Estado para edição de status
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [novoStatus, setNovoStatus] = useState('');
@@ -191,6 +196,51 @@ const Appointments: React.FC = () => {
     } catch (error: any) {
       console.error('❌ Erro ao atualizar status:', error);
       setErro(error?.message || 'Erro ao atualizar status');
+    }
+  };
+
+  // ✅ SALVAR EDIÇÃO DE PROFISSIONAL
+  const handleSalvarProfissional = async () => {
+    try {
+      if (!novoProfissionalId) {
+        setErro('Selecione um profissional');
+        return;
+      }
+
+      const companyId = localStorage.getItem('companyId');
+      if (!companyId) {
+        setErro('Company ID não encontrado');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('agendamentos')
+        .update({ profissional_id: novoProfissionalId })
+        .eq('id', agendamentoEditandoProfissional.id)
+        .eq('company_id', companyId);
+
+      if (error) {
+        console.error('❌ Erro ao atualizar profissional:', error);
+        setErro('Erro ao salvar profissional');
+        return;
+      }
+
+      setAgendamentos(agendamentos.map(apt =>
+        apt.id === agendamentoEditandoProfissional.id 
+          ? { ...apt, profissional_id: novoProfissionalId }
+          : apt
+      ));
+
+      setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
+      setFormaPagamento("");
+      setShowPagamentoModal(true);
+      setShowEditProfissionalModal(false);
+      setAgendamentoEditandoProfissional(null);
+      setNovoProfissionalId('');
+      setErro('');
+    } catch (error: any) {
+      console.error('❌ Erro:', error);
+      setErro(error?.message || 'Erro ao salvar');
     }
   };
 
@@ -493,10 +543,10 @@ const Appointments: React.FC = () => {
                       <span className="text-sm text-slate-600">{servico?.nome}</span>
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden md:table-cell">
-                      <span className="text-sm text-slate-600">{profissional?.nome}</span>
+                      <span className="text-sm text-slate-600">{profissional?.nome || 'Sem profissional'}</span>
                     </td>
                     <td className="px-4 md:px-6 py-4">
-                      <div className="text-sm text-slate-800 font-medium">{apt.data_agendamento}</div>
+                      <div className="text-sm text-slate-800 font-medium">{new Date(apt.data_agendamento).toLocaleDateString("pt-BR")}</div>
                       <div className="text-xs text-indigo-600 font-bold">{apt.hora_agendamento}</div>
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
@@ -548,10 +598,12 @@ const Appointments: React.FC = () => {
                           </span>
                           <button
                             onClick={() => {
-                              setEditandoId(apt.id);
-                              setNovoStatus(apt.status);
+                              setShowEditProfissionalModal(true);
+                              setAgendamentoEditandoProfissional(apt);
+                              setNovoProfissionalId(apt.profissional_id || '');
                             }}
                             className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
+                            title="Editar profissional"
                           >
                             <Edit2 size={14} />
                           </button>
@@ -770,6 +822,84 @@ const Appointments: React.FC = () => {
               >
                 <Check size={18} />
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE EDIÇÃO DE PROFISSIONAL */}
+      {showEditProfissionalModal && agendamentoEditandoProfissional && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-bold text-slate-800">Editar Profissional</h3>
+              <button 
+                onClick={() => {
+                  setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
+      setFormaPagamento("");
+      setShowPagamentoModal(true);
+      setShowEditProfissionalModal(false);
+                  setAgendamentoEditandoProfissional(null);
+                  setNovoProfissionalId('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {erro && (
+              <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+                <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{erro}</p>
+              </div>
+            )}
+
+            <div className="bg-slate-50 p-4 rounded-lg mb-6">
+              <p className="text-sm text-slate-600 mb-2">Agendamento:</p>
+              <p className="font-bold text-slate-900">{clientes.find(c => c.id === agendamentoEditandoProfissional.cliente_id)?.nome}</p>
+              <p className="text-xs text-slate-500 mt-1">
+                {agendamentoEditandoProfissional.data_agendamento} às {agendamentoEditandoProfissional.hora_agendamento}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Profissional *</label>
+              <select 
+                value={novoProfissionalId}
+                onChange={(e) => setNovoProfissionalId(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                required
+              >
+                <option value="">Selecione um profissional</option>
+                {profissionais.map(p => (
+                  <option key={p.id} value={p.id}>{p.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
+      setFormaPagamento("");
+      setShowPagamentoModal(true);
+      setShowEditProfissionalModal(false);
+                  setAgendamentoEditandoProfissional(null);
+                  setNovoProfissionalId('');
+                }}
+                className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSalvarProfissional}
+                disabled={!novoProfissionalId}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Check size={18} />
+                Salvar
               </button>
             </div>
           </div>
