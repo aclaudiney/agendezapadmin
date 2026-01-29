@@ -15,6 +15,16 @@ const Appointments: React.FC = () => {
   const [servicos, setServicos] = useState<any[]>([]);
   const [erro, setErro] = useState('');
 
+  // ✅ FUNÇÃO PARA FORMATAR DATA CORRETAMENTE (SEM TIMEZONE)
+  const formatarDataString = (dataStr: string): string => {
+    try {
+      const [year, month, day] = dataStr.split('-');
+      return `${day}/${month}/${year}`;
+    } catch {
+      return dataStr;
+    }
+  };
+
   // Estado para modal de pagamento
   const [showPagamentoModal, setShowPagamentoModal] = useState(false);
   const [agendamentoSelecionado, setAgendamentoSelecionado] = useState<any>(null);
@@ -546,7 +556,7 @@ const Appointments: React.FC = () => {
                       <span className="text-sm text-slate-600">{profissional?.nome || 'Sem profissional'}</span>
                     </td>
                     <td className="px-4 md:px-6 py-4">
-                      <div className="text-sm text-slate-800 font-medium">{new Date(apt.data_agendamento).toLocaleDateString("pt-BR")}</div>
+                      <div className="text-sm text-slate-800 font-medium">{formatarDataString(apt.data_agendamento)}</div>
                       <div className="text-xs text-indigo-600 font-bold">{apt.hora_agendamento}</div>
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
