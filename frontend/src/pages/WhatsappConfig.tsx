@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config/api';
 import { QrCode, MessageSquare, CheckCircle2, RefreshCw, LogOut } from 'lucide-react';
-
-// CONFIGURAÇÃO DE URL: Local ou Nuvem
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 const WhatsappConfig: React.FC = () => {
   const [qrCode, setQrCode] = useState<string | null>(null);
