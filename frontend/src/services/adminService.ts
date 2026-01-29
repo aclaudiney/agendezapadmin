@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:3001';
+import { API_URL } from '../config/api';
 
 export const adminService = {
   // ✅ LISTAR TODAS AS EMPRESAS
@@ -51,7 +51,7 @@ export const adminService = {
     }
   },
 
-  // ✅ DELETAR EMPRESA (CORRIGIDO - usa DELETE ao invés de POST)
+  // ✅ DELETAR EMPRESA
   async desativarEmpresa(companyId: string) {
     try {
       const response = await axios.delete(`${API_URL}/admin/companies/${companyId}`);
