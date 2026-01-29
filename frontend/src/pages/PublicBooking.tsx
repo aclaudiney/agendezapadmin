@@ -14,7 +14,7 @@ interface Servico {
   id: string;
   nome: string;
   preco: number;
-  duracao_minutos: number;
+  duracao: number;
   categoria?: string;
   company_id?: string;
 }
@@ -73,7 +73,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const [periodoAtual, setPeriodoAtual] = useState<'manha' | 'tarde' | 'noite' | ''>('');
   const horariosScrollRef = useRef<HTMLDivElement>(null);
 
-  // ✅ ESTADOS DO FLUXO DE CLIENTE
   const [modalStep, setModalStep] = useState<ModalStep>('servicos');
   const [telefoneInput, setTelefoneInput] = useState('');
   const [nomeInput, setNomeInput] = useState('');
@@ -83,7 +82,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const [agendamentoConfirmado, setAgendamentoConfirmado] = useState<any>(null);
   const [showPerfilMenu, setShowPerfilMenu] = useState(false);
 
-  // ✅ Verificar se cliente está logado ao carregar
   useEffect(() => {
     const clienteSalvo = localStorage.getItem('clienteLogado');
     if (clienteSalvo) {
@@ -91,7 +89,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     }
   }, []);
 
-  // ✅ BUSCAR EMPRESA
   useEffect(() => {
     const buscarEmpresa = async () => {
       try {
@@ -117,7 +114,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     buscarEmpresa();
   }, [slug]);
 
-  // ✅ BUSCAR DADOS
   useEffect(() => {
     if (!companyId) return;
 
@@ -146,7 +142,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     fetchData();
   }, [companyId]);
 
-  // ✅ GERAR PRÓXIMOS 30 DIAS
   const gerarProximosDias = () => {
     const dias = [];
     const hoje = new Date();
@@ -158,7 +153,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     return dias;
   };
 
-  // ✅ OBTER HORÁRIO DO DIA DO BANCO
   const obterHorarioDoDia = (data: Date) => {
     const diasMap: Record<number, string> = {
       0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
@@ -183,7 +177,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     return { inicio: inicio.trim(), fim: fim.trim() };
   };
 
-  // ✅ GERAR TODOS OS HORÁRIOS DO DIA
   const gerarTodosHorarios = () => {
     if (!diaAtual) return [];
 
@@ -224,7 +217,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     return horarios;
   };
 
-  // ✅ FILTRAR HORÁRIOS POR PERÍODO
   const filtrarHorariosPorPeriodo = (horarios: string[], periodo: string) => {
     return horarios.filter(hora => {
       const [h] = hora.split(':').map(Number);
@@ -237,7 +229,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     });
   };
 
-  // ✅ ATUALIZAR PERÍODOS DISPONÍVEIS
   useEffect(() => {
     if (!diaAtual) return;
 
@@ -258,14 +249,13 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     }
   }, [diaAtual, config]);
 
-  // ✅ VERIFICAR HORÁRIO OCUPADO
   const isHorarioOcupado = (hora: string): boolean => {
     if (!servicoEmEdicao || !diaAtual) return false;
     if (profissionalAtual === 'sem-preferencia') return false;
 
     const [hReq, mReq] = hora.split(':').map(Number);
     const minutoReq = hReq * 60 + mReq;
-    const fimReq = minutoReq + servicoEmEdicao.duracao_minutos;
+    const fimReq = minutoReq + servicoEmEdicao.duracao;
 
     return agendamentos.some(ag => {
       if (ag.profissional_id !== profissionalAtual || ag.data_agendamento !== diaAtual || ag.status === 'cancelado') {
@@ -275,13 +265,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       const [hAg, mAg] = ag.hora_agendamento.split(':').map(Number);
       const minutoAg = hAg * 60 + mAg;
       const servico = servicos.find(s => s.id === ag.servico_id);
-      const fimAg = minutoAg + (servico?.duracao_minutos || 30);
+      const fimAg = minutoAg + (servico?.duracao || 30);
 
       return !(fimReq <= minutoAg || minutoReq >= fimAg);
     });
   };
 
-  // ✅ ETAPA 1: VERIFICAR TELEFONE (SÓ SE NÃO ESTIVER LOGADO)
   const handleVerificarTelefone = async (e: React.FormEvent) => {
     e.preventDefault();
     setErroMsg('');
@@ -305,19 +294,15 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         .eq('company_id', companyId);
 
       if (clientes && clientes.length > 0) {
-        // ✅ CLIENTE EXISTE
         setClienteLogado(clientes[0]);
         localStorage.setItem('clienteLogado', JSON.stringify(clientes[0]));
         
-        // ✅ SE VEIO PARA AGENDAR, VAI PARA CONFIRMAÇÃO
         if (servicosSelecionados.length > 0) {
           setModalStep('confirmacao');
         } else {
-          // Fecha modal e volta à página normal (já logado)
           setShowBookingModal(false);
         }
       } else {
-        // ✅ CLIENTE NOVO - PEDE NOME
         setModalStep('nome');
       }
     } catch (error: any) {
@@ -328,7 +313,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     }
   };
 
-  // ✅ ETAPA 2: CRIAR CONTA
   const handleCriarConta = async (e: React.FormEvent) => {
     e.preventDefault();
     setErroMsg('');
@@ -363,11 +347,9 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       setClienteLogado(novoCliente);
       localStorage.setItem('clienteLogado', JSON.stringify(novoCliente));
       
-      // ✅ SE VEIO PARA AGENDAR, VAI PARA CONFIRMAÇÃO
       if (servicosSelecionados.length > 0) {
         setModalStep('confirmacao');
       } else {
-        // Fecha modal e volta à página normal (já logado)
         setShowBookingModal(false);
       }
     } catch (error: any) {
@@ -378,7 +360,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     }
   };
 
-  // ✅ ETAPA 3: CONFIRMAR RESERVA
   const handleConfirmarReserva = async (e: React.FormEvent) => {
     e.preventDefault();
     setErroMsg('');
@@ -440,23 +421,27 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
     setServicosSelecionados([...servicosSelecionados, novoServico]);
     setServicoEmEdicao(null);
+    setDiaAtual('');
+    setHoraAtual('');
+    setProfissionalAtual('sem-preferencia');
+    setPeriodoAtual('manha');
   };
 
   const adicionarServico = (servico: Servico) => {
-    // ✅ SE ESTÁ LOGADO, VAI DIRETO PARA SELEÇÃO DE DATA/HORA
-    // ✅ SE NÃO ESTÁ LOGADO, ABRE MODAL DE LOGIN
     setServicoEmEdicao(servico);
-    setDiaAtual('');
+    
+    // ✅ PRÉ-SELECIONAR DATA DE HOJE
+    const hoje = new Date().toISOString().split('T')[0];
+    setDiaAtual(hoje);
+    
     setHoraAtual('');
     setProfissionalAtual('sem-preferencia');
     setPeriodoAtual('manha');
     setShowBookingModal(true);
     
     if (clienteLogado) {
-      // Já está logado, vai direto para seleção de data/hora
       setModalStep('servicos');
     } else {
-      // Não está logado, pede telefone
       setModalStep('telefone');
       setTelefoneInput('');
       setNomeInput('');
@@ -469,7 +454,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   };
 
   const calcularTotal = () => servicosSelecionados.reduce((sum, s) => sum + s.preco, 0);
-  const calcularDuracao = () => servicosSelecionados.reduce((sum, s) => sum + s.duracao_minutos, 0);
+  const calcularDuracao = () => servicosSelecionados.reduce((sum, s) => sum + s.duracao, 0);
 
   const detectarPeriodoDoHorario = (hora: string): 'manha' | 'tarde' | 'noite' => {
     const [h] = hora.split(':').map(Number);
@@ -543,7 +528,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* HEADER */}
       <header className="sticky top-0 z-50 bg-black border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -568,7 +552,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               <Share2 size={20} />
             </button>
 
-            {/* ✅ BOTÃO PERFIL / ENTRAR */}
             <div className="relative">
               <button
                 onClick={() => setShowPerfilMenu(!showPerfilMenu)}
@@ -580,7 +563,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                 </span>
               </button>
 
-              {/* ✅ MENU PERFIL */}
               {showPerfilMenu && (
                 <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-2xl border border-slate-200 z-50">
                   {clienteLogado ? (
@@ -642,7 +624,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         </div>
       </header>
 
-      {/* GALERIA */}
       {fotos.length > 0 && (
         <div className="relative w-full h-96 bg-black overflow-hidden">
           <img src={fotos[currentPhotoIndex]} alt="Galeria" className="w-full h-full object-cover" />
@@ -659,7 +640,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         </div>
       )}
 
-      {/* INFO DA LOJA */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4 py-8 border-b border-slate-200 max-w-7xl mx-auto">
         <div className="md:col-span-2">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">{config?.nome_estabelecimento || 'Loja'}</h1>
@@ -698,7 +678,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         </div>
 
         <div className="bg-slate-50 rounded-xl p-6">
-          {/* ✅ STATUS ABERTO/FECHADO HOJE */}
           {(() => {
             const hoje = new Date();
             const diasMap: Record<number, string> = {
@@ -749,7 +728,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         </div>
       </div>
 
-      {/* SERVIÇOS */}
       <div className="px-4 py-8 max-w-7xl mx-auto">
         {Object.entries(servicosPorCategoria).map(([categoria, items]) => (
           <div key={categoria} className="mb-12">
@@ -763,7 +741,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                     <div className="flex items-center gap-4 mt-2">
                       <div className="flex items-center gap-1 text-slate-500 text-sm">
                         <Clock size={16} />
-                        {servico.duracao_minutos} min
+                        {servico.duracao || 30} min
                       </div>
                       <div className="text-cyan-600 font-bold">R$ {servico.preco.toFixed(2)}</div>
                     </div>
@@ -783,16 +761,14 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         ))}
       </div>
 
-      {/* MODAL AGENDAMENTO */}
       {showBookingModal && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4 bg-black/50">
           <div className="w-full md:max-w-4xl rounded-t-3xl md:rounded-3xl bg-white shadow-2xl max-h-[98vh] md:max-h-[95vh] overflow-y-auto flex flex-col">
             
-            {/* ========== ETAPA 1: SELEÇÃO DE SERVIÇOS (SE LOGADO) OU TELEFONE (SE NÃO LOGADO) ========== */}
             {modalStep === 'servicos' && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
-                  <h3 className="text-2xl font-bold text-slate-900">{getMesAnoIntervalo()}</h3>
+                  <h3 className="text-2xl font-bold text-slate-900">{servicoEmEdicao?.nome || getMesAnoIntervalo()}</h3>
                   <button
                     onClick={() => {
                       setShowBookingModal(false);
@@ -806,20 +782,9 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                 </div>
 
                 {servicoEmEdicao ? (
-                  // Seleção de DATA/HORA/PROFISSIONAL
-                  <div className="p-6 space-y-6 flex-1">
-                    {/* CALENDÁRIO */}
+                  <div className="p-6 space-y-6 flex-1 overflow-y-auto">
                     <div>
-                      <div className="flex items-center justify-between mb-4">
-                        <button className="p-2 hover:bg-slate-100 rounded-lg">
-                          <ChevronLeft size={20} />
-                        </button>
-                        <h4 className="font-bold text-slate-900 capitalize text-center flex-1">{getMesAnoIntervalo()}</h4>
-                        <button className="p-2 hover:bg-slate-100 rounded-lg">
-                          <ChevronRight size={20} />
-                        </button>
-                      </div>
-
+                      <h4 className="font-bold text-slate-900 mb-4 text-lg">Selecione a Data</h4>
                       <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 mb-6">
                         {proximosDias.map((dia) => {
                           const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
@@ -853,122 +818,119 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                       </div>
                     </div>
 
-                    {diaAtual && (
-                      <>
-                        {/* PERÍODO */}
-                        <div>
-                          <label className="block text-sm font-bold text-slate-900 mb-3">Período</label>
-                          <div className="grid grid-cols-3 gap-2">
-                            {['manha', 'tarde', 'noite'].map(p => {
-                              const periodo = p === 'manha' ? 'Manhã' : p === 'tarde' ? 'Tarde' : 'Noite';
-                              const disponivel = periodosDisponiveis[p as keyof typeof periodosDisponiveis];
+                    <div>
+                      <label className="block text-sm font-bold text-slate-900 mb-3">Período</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['manha', 'tarde', 'noite'].map(p => {
+                          const periodo = p === 'manha' ? 'Manhã' : p === 'tarde' ? 'Tarde' : 'Noite';
+                          const disponivel = diaAtual ? periodosDisponiveis[p as keyof typeof periodosDisponiveis] : false;
 
-                              return (
+                          return (
+                            <button
+                              key={p}
+                              onClick={() => {
+                                if (disponivel) {
+                                  setPeriodoAtual(p as any);
+                                  const horariosDoperiodo = filtrarHorariosPorPeriodo(todosHorarios, p);
+                                  if (horariosDoperiodo.length > 0) {
+                                    setHoraAtual(horariosDoperiodo[0]);
+                                  }
+                                }
+                              }}
+                              disabled={!disponivel}
+                              className={`py-2 rounded-lg font-bold text-sm transition-all ${
+                                disponivel
+                                  ? periodoAtual === p
+                                    ? 'bg-cyan-600 text-white'
+                                    : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                                  : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                              }`}
+                            >
+                              {periodo}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {!diaAtual && <p className="text-xs text-slate-500 mt-2">Selecione uma data primeiro</p>}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-900 mb-3">Horário</label>
+                      {!diaAtual ? (
+                        <div className="w-full text-center py-6 text-slate-500 font-semibold bg-slate-50 rounded-lg">
+                          Selecione uma data para ver horários disponíveis
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
+                            <ChevronLeft size={20} />
+                          </button>
+
+                          <div ref={horariosScrollRef} className="flex gap-2 overflow-x-auto pb-2 flex-1" style={{ scrollBehavior: 'smooth' }}>
+                            {todosHorarios.length > 0 ? (
+                              todosHorarios.map(hora => (
                                 <button
-                                  key={p}
+                                  key={hora}
                                   onClick={() => {
-                                    if (disponivel) {
-                                      setPeriodoAtual(p as any);
-                                      const horariosDoperiodo = filtrarHorariosPorPeriodo(todosHorarios, p);
-                                      if (horariosDoperiodo.length > 0) {
-                                        setHoraAtual(horariosDoperiodo[0]);
-                                      }
-                                    }
+                                    setHoraAtual(hora);
+                                    const periodoDoHorario = detectarPeriodoDoHorario(hora);
+                                    setPeriodoAtual(periodoDoHorario);
                                   }}
-                                  disabled={!disponivel}
-                                  className={`py-2 rounded-lg font-bold text-sm transition-all ${
-                                    disponivel
-                                      ? periodoAtual === p
-                                        ? 'bg-cyan-600 text-white'
-                                        : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                                      : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                                  className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${
+                                    horaAtual === hora
+                                      ? 'bg-cyan-600 text-white shadow-lg'
+                                      : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
                                   }`}
                                 >
-                                  {periodo}
+                                  {hora}
                                 </button>
-                              );
-                            })}
+                              ))
+                            ) : (
+                              <div className="w-full text-center py-3 text-red-600 font-semibold text-sm">Sem horários disponíveis</div>
+                            )}
                           </div>
+
+                          <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
+                            <ChevronRight size={20} />
+                          </button>
                         </div>
+                      )}
+                    </div>
 
-                        {/* HORÁRIOS */}
-                        <div>
-                          <label className="block text-sm font-bold text-slate-900 mb-3">Horário</label>
-                          <div className="flex items-center gap-2">
-                            <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
-                              <ChevronLeft size={20} />
-                            </button>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-900 mb-3">Profissional</label>
+                      <select
+                        value={profissionalAtual}
+                        onChange={(e) => setProfissionalAtual(e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-white text-slate-900 font-medium"
+                      >
+                        <option value="sem-preferencia">Sem preferência</option>
+                        {profissionais.map(p => (
+                          <option key={p.id} value={p.id}>{p.nome}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                            <div ref={horariosScrollRef} className="flex gap-2 overflow-x-auto pb-2 flex-1" style={{ scrollBehavior: 'smooth' }}>
-                              {todosHorarios.length > 0 ? (
-                                todosHorarios.map(hora => (
-                                  <button
-                                    key={hora}
-                                    onClick={() => {
-                                      setHoraAtual(hora);
-                                      const periodoDoHorario = detectarPeriodoDoHorario(hora);
-                                      setPeriodoAtual(periodoDoHorario);
-                                    }}
-                                    className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${
-                                      horaAtual === hora
-                                        ? 'bg-cyan-600 text-white shadow-lg'
-                                        : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                                    }`}
-                                  >
-                                    {hora}
-                                  </button>
-                                ))
-                              ) : (
-                                <div className="w-full text-center py-3 text-red-600 font-semibold text-sm">Sem horários</div>
-                              )}
-                            </div>
-
-                            <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
-                              <ChevronRight size={20} />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* PROFISSIONAL */}
-                        <div>
-                          <label className="block text-sm font-bold text-slate-900 mb-3">Profissional</label>
-                          <select
-                            value={profissionalAtual}
-                            onChange={(e) => setProfissionalAtual(e.target.value)}
-                            className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-white text-slate-900 font-medium"
-                          >
-                            <option value="sem-preferencia">Sem preferência</option>
-                            {profissionais.map(p => (
-                              <option key={p.id} value={p.id}>{p.nome}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* PREVIEW */}
-                        {horaAtual && (
-                          <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
-                            <h4 className="font-bold text-slate-900 mb-2">{servicoEmEdicao?.nome}</h4>
-                            <p className="text-sm text-slate-600 mb-2">R$ {servicoEmEdicao?.preco.toFixed(2)} • {servicoEmEdicao?.duracao_minutos} min</p>
-                            <p className="text-xs text-slate-500">
-                              {new Date(diaAtual).toLocaleDateString('pt-BR')} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao_minutos || 0)}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* CONFIRMAR */}
-                        <button
-                          onClick={confirmarServico}
-                          disabled={!horaAtual}
-                          className="w-full py-4 rounded-lg font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg text-lg"
-                          style={{ backgroundColor: corTema }}
-                        >
-                          Confirmar
-                        </button>
-                      </>
+                    {diaAtual && horaAtual && (
+                      <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
+                        <h4 className="font-bold text-slate-900 mb-2">{servicoEmEdicao?.nome}</h4>
+                        <p className="text-sm text-slate-600 mb-2">R$ {servicoEmEdicao?.preco.toFixed(2)} • {servicoEmEdicao?.duracao || 30} min</p>
+                        <p className="text-xs text-slate-500">
+                          {new Date(diaAtual).toLocaleDateString('pt-BR')} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao || 30)}
+                        </p>
+                      </div>
                     )}
+
+                    <button
+                      onClick={confirmarServico}
+                      disabled={!diaAtual || !horaAtual}
+                      className="w-full py-4 rounded-lg font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg text-lg"
+                      style={{ backgroundColor: corTema }}
+                    >
+                      Confirmar
+                    </button>
                   </div>
                 ) : (
-                  // Resumo dos serviços
                   <div className="p-6 space-y-6 flex-1 flex flex-col">
                     <div className="flex-1">
                       {servicosSelecionados.map((s, idx) => (
@@ -976,14 +938,14 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                           <div className="flex justify-between items-start mb-3">
                             <div>
                               <h4 className="font-bold text-slate-900">{s.nome}</h4>
-                              <p className="text-sm text-slate-600 mt-1">R$ {s.preco.toFixed(2)} • {s.duracao_minutos} min</p>
+                              <p className="text-sm text-slate-600 mt-1">R$ {s.preco.toFixed(2)} • {s.duracao} min</p>
                             </div>
                             <button onClick={() => removerServico(idx)} className="text-red-500 hover:text-red-700">
                               <X size={20} />
                             </button>
                           </div>
                           <p className="text-xs text-slate-500">
-                            {new Date(s.data_agendamento!).toLocaleDateString('pt-BR')} • {s.hora_agendamento} - {formatarHoraFim(s.hora_agendamento!, s.duracao_minutos)} • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
+                            {new Date(s.data_agendamento!).toLocaleDateString('pt-BR')} • {s.hora_agendamento} às {formatarHoraFim(s.hora_agendamento!, s.duracao)} ({s.duracao} min) • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
                           </p>
                         </div>
                       ))}
@@ -1009,12 +971,11 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                         <span className="text-3xl font-bold text-cyan-600">R$ {calcularTotal().toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-xs text-slate-500">
-                        <span>{calcularDuracao()} min</span>
+                        <span>{calcularDuracao()} minutos</span>
                       </div>
                     </div>
 
                     {clienteLogado ? (
-                      // ✅ JÁ ESTÁ LOGADO - VAI DIRETO PARA CONFIRMAÇÃO
                       <button
                         onClick={() => setModalStep('confirmacao')}
                         className="w-full py-4 rounded-lg font-bold text-white transition-all hover:shadow-lg text-lg"
@@ -1023,7 +984,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                         Confirmar Agendamento
                       </button>
                     ) : (
-                      // ✅ NÃO ESTÁ LOGADO - PEDE TELEFONE
                       <button
                         onClick={() => {
                           setModalStep('telefone');
@@ -1041,7 +1001,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
-            {/* ========== ETAPA 2: VERIFICAR TELEFONE ========== */}
             {modalStep === 'telefone' && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
@@ -1094,7 +1053,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
-            {/* ========== ETAPA 3: CRIAR CONTA (SE NOVO) ========== */}
             {modalStep === 'nome' && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
@@ -1150,7 +1108,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
-            {/* ========== ETAPA 4: CONFIRMAÇÃO ========== */}
             {modalStep === 'confirmacao' && clienteLogado && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
@@ -1174,11 +1131,11 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                       <div className="flex justify-between items-start mb-3">
                         <div>
                           <h4 className="font-bold text-slate-900">{servicosSelecionados[0].nome}</h4>
-                          <p className="text-sm text-slate-600 mt-1">R$ {servicosSelecionados[0].preco.toFixed(2)} • {servicosSelecionados[0].duracao_minutos} min</p>
+                          <p className="text-sm text-slate-600 mt-1">R$ {servicosSelecionados[0].preco.toFixed(2)} • {servicosSelecionados[0].duracao} min</p>
                         </div>
                       </div>
                       <p className="text-sm text-slate-600">
-                        <strong>{new Date(servicosSelecionados[0].data_agendamento!).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</strong> • <strong>{servicosSelecionados[0].hora_agendamento}</strong> - {formatarHoraFim(servicosSelecionados[0].hora_agendamento!, servicosSelecionados[0].duracao_minutos)}
+                        <strong>{new Date(servicosSelecionados[0].data_agendamento!).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</strong> • <strong>{servicosSelecionados[0].hora_agendamento}</strong> - {formatarHoraFim(servicosSelecionados[0].hora_agendamento!, servicosSelecionados[0].duracao)}
                       </p>
                       <p className="text-xs text-slate-500 mt-2">Funcionário: {servicosSelecionados[0].profissional_id ? profissionais.find(p => p.id === servicosSelecionados[0].profissional_id)?.nome : 'Sem preferência'}</p>
                     </div>
@@ -1203,9 +1160,24 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
-            {/* ========== ETAPA 5: SUCESSO ========== */}
             {modalStep === 'sucesso' && agendamentoConfirmado && (
               <>
+                <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
+                  <h3 className="text-2xl font-bold text-slate-900 flex-1">Agendamento Confirmado</h3>
+                  <button
+                    onClick={() => {
+                      setShowBookingModal(false);
+                      setServicosSelecionados([]);
+                      setServicoEmEdicao(null);
+                      setAgendamentoConfirmado(null);
+                      setModalStep('servicos');
+                    }}
+                    className="text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
                 <div className="p-6 flex-1 flex flex-col items-center justify-center">
                   <div className="mb-6">
                     <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center">
@@ -1238,7 +1210,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         </div>
       )}
 
-      {/* MODAL COMPARTILHAR */}
       {showShareModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl p-6">
