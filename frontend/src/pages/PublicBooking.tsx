@@ -176,6 +176,14 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     return dias;
   };
 
+  // ✅ FUNÇÃO PARA CONVERTER DATE PARA STRING YYYY-MM-DD SEM TIMEZONE
+  const dateToString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const obterHorarioDoDia = (data: Date) => {
     const diasMap: Record<number, string> = {
       0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
@@ -213,7 +221,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     const hFim = parseInt(horaFimStr.trim());
 
     const agora = new Date();
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = dateToString(new Date());
     let horarioAtualMinutos = 0;
 
     if (diaAtual === hoje) {
@@ -395,6 +403,54 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         return;
       }
 
+      // ✅ BUSCAR AGENDAMENTOS ATUALIZADOS DO SUPABASE ANTES DE CONFIRMAR
+      const { data: agendamentosAtualizados, error: erroFetch } = await supabase
+        .from('agendamentos')
+        .select('*')
+        .eq('company_id', companyId);
+
+      if (erroFetch || !agendamentosAtualizados) {
+        setErroMsg('Erro ao validar disponibilidade');
+        setLoadingVerificacao(false);
+        return;
+      }
+
+      // ✅ VALIDAR CADA SERVIÇO SELECIONADO CONTRA OS HORÁRIOS ATUALIZADOS
+      for (const servico of servicosSelecionados) {
+        const profissionalId = servico.profissional_id;
+        
+        if (!profissionalId) {
+          // Se sem preferência, pular validação
+          continue;
+        }
+
+        const [hReq, mReq] = servico.hora_agendamento!.split(':').map(Number);
+        const minutoReq = hReq * 60 + mReq;
+        const fimReq = minutoReq + servico.duracao;
+
+        const horarioOcupado = agendamentosAtualizados.some(ag => {
+          if (ag.profissional_id !== profissionalId || 
+              ag.data_agendamento !== servico.data_agendamento || 
+              ag.status === 'cancelado') {
+            return false;
+          }
+
+          const [hAg, mAg] = ag.hora_agendamento.split(':').map(Number);
+          const minutoAg = hAg * 60 + mAg;
+          const servicoAg = servicos.find(s => s.id === ag.servico_id);
+          const fimAg = minutoAg + (servicoAg?.duracao || 30);
+
+          return !(fimReq <= minutoAg || minutoReq >= fimAg);
+        });
+
+        if (horarioOcupado) {
+          setErroMsg(`⚠️ O horário ${servico.hora_agendamento} do dia ${formatarDataString(servico.data_agendamento!)} com ${servico.profissional_id ? 'o profissional selecionado' : 'sem preferência'} já foi reservado. Escolha outro horário.`);
+          setLoadingVerificacao(false);
+          return;
+        }
+      }
+
+      // ✅ SE PASSOU NA VALIDAÇÃO, SALVAR
       const agendamentosParaSalvar = servicosSelecionados.map(s => ({
         cliente_id: clienteLogado.id,
         servico_id: s.id,
@@ -413,6 +469,17 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       if (error) {
         setErroMsg('Erro ao confirmar agendamento');
         throw error;
+      }
+
+      // ✅ RECARREGAR AGENDAMENTOS APÓS SALVAR
+      const { data: agendamentosNovos } = await supabase
+        .from('agendamentos')
+        .select('*')
+        .eq('company_id', companyId)
+        .neq('status', 'cancelado');
+      
+      if (agendamentosNovos) {
+        setAgendamentos(agendamentosNovos);
       }
 
       setAgendamentoConfirmado({
@@ -436,6 +503,14 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       return;
     }
 
+    // ✅ VALIDAR SE HORÁRIO TÁ OCUPADO (MESMO SEM PREFERÊNCIA)
+    if (profissionalAtual !== 'sem-preferencia') {
+      if (isHorarioOcupado(horaAtual)) {
+        setErroMsg('Este horário já foi reservado! Escolha outro horário ou outro profissional.');
+        return;
+      }
+    }
+
     const novoServico: ServicoSelecionado = {
       ...servicoEmEdicao,
       profissional_id: profissionalAtual === 'sem-preferencia' ? undefined : profissionalAtual,
@@ -449,17 +524,24 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     setHoraAtual('');
     setProfissionalAtual('sem-preferencia');
     setPeriodoAtual('manha');
+    setErroMsg('');  // ✅ LIMPAR ERRO APÓS ADICIONAR COM SUCESSO
   };
 
   const adicionarServico = (servico: Servico) => {
     setServicoEmEdicao(servico);
     
     // ✅ PRÉ-SELECIONAR DATA DE HOJE
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = dateToString(new Date());
     setDiaAtual(hoje);
     
+    // ✅ PRÉ-SELECIONAR PROFISSIONAL SE TIVER SÓ 1
+    if (profissionais.length === 1) {
+      setProfissionalAtual(profissionais[0].id);
+    } else {
+      setProfissionalAtual('sem-preferencia');
+    }
+    
     setHoraAtual('');
-    setProfissionalAtual('sem-preferencia');
     setPeriodoAtual('manha');
     setShowBookingModal(true);
     
@@ -520,7 +602,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-950 flex items-center justify-center p-4">
         <div className="text-center max-w-md">
           <AlertCircle size={48} className="text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-white mb-2">Loja não encontrada</h1>
+          <h1 className="text-2xl font-bold text-white mb-2">Erro</h1>
           <p className="text-white/60">{erro}</p>
         </div>
       </div>
@@ -807,12 +889,19 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
                 {servicoEmEdicao ? (
                   <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                    {erroMsg && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-start gap-2">
+                        <span className="text-lg">⚠️</span>
+                        <p>{erroMsg}</p>
+                      </div>
+                    )}
+                    
                     <div>
                       <h4 className="font-bold text-slate-900 mb-4 text-lg">Selecione a Data</h4>
                       <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 mb-6">
                         {proximosDias.map((dia) => {
                           const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-                          const diaStr = dia.toISOString().split('T')[0];
+                          const diaStr = dateToString(dia);
                           const isSelected = diaAtual === diaStr;
                           const horarioDia = obterHorarioDoDia(dia);
                           const isClosed = !horarioDia;
