@@ -159,7 +159,8 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       4: 'quinta', 5: 'sexta', 6: 'sabado'
     };
     
-    const diaName = diasMap[data.getDay()];
+    const dataAjustada = new Date(data.getTime() + data.getTimezoneOffset() * 60000);
+    const diaName = diasMap[dataAjustada.getDay()];
     const diasAberturaJSON = typeof config?.dias_abertura === 'string' 
       ? JSON.parse(config.dias_abertura) 
       : config?.dias_abertura;
@@ -950,20 +951,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                         </div>
                       ))}
                     </div>
-
-                    <button 
-                      onClick={() => {
-                        setServicoEmEdicao(null);
-                        setDiaAtual('');
-                        setHoraAtual('');
-                        setProfissionalAtual('sem-preferencia');
-                        setPeriodoAtual('manha');
-                      }} 
-                      className="w-full py-2 text-cyan-600 font-bold flex items-center justify-center gap-2 hover:bg-cyan-50 rounded-lg transition-colors"
-                    >
-                      <Plus size={20} />
-                      
-                    </button>
 
                     <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
                       <div className="flex justify-between items-baseline mb-2">
