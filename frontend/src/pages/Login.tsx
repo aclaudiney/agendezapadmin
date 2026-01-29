@@ -185,17 +185,17 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
           {/* Credenciais de teste */}
           <div className="mt-6 pt-6 border-t border-slate-200">
-            <p className="text-xs text-slate-500 text-center mb-3">📋 Credenciais de teste:</p>
+            <p className="text-xs text-slate-500 text-center mb-3"></p>
             <div className="space-y-2 text-xs text-slate-600">
               <div className="bg-blue-50 p-3 rounded border border-blue-200">
                 <p><strong>👤 Admin:</strong></p>
-                <p>Email: admin@agendezap.com</p>
-                <p>Senha: 123</p>
+                <p></p>
+                <p></p>
               </div>
               <div className="bg-green-50 p-3 rounded border border-green-200">
                 <p><strong>🏢 Empresa:</strong></p>
-                <p>Email: dombarao@admin.com</p>
-                <p>Senha: 123</p>
+                <p></p>
+                <p></p>
               </div>
             </div>
           </div>
