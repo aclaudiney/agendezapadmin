@@ -61,6 +61,19 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [servicosSelecionados, setServicosSelecionados] = useState<ServicoSelecionado[]>([]);
+  // ✅ FUNÇÃO PARA OBTER DIA DA SEMANA COM DATA CORRETA
+  const obterDiaSemanaData = (dataStr: string): string => {
+    const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    
+    const [year, month, day] = dataStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    
+    const diaSemana = diasSemana[date.getDay()];
+    const nomeMes = meses[date.getMonth()];
+    
+    return `${diaSemana}, ${String(day).padStart(2, '0')} de ${nomeMes}`;
+  };
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandirHorarios, setExpandirHorarios] = useState(false);
@@ -81,6 +94,16 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const [loadingVerificacao, setLoadingVerificacao] = useState(false);
   const [agendamentoConfirmado, setAgendamentoConfirmado] = useState<any>(null);
   const [showPerfilMenu, setShowPerfilMenu] = useState(false);
+
+  // ✅ FUNÇÃO PARA FORMATAR DATA CORRETAMENTE (SEM TIMEZONE)
+  const formatarDataString = (dataStr: string): string => {
+    try {
+      const [year, month, day] = dataStr.split('-');
+      return `${day}/${month}/${year}`;
+    } catch {
+      return dataStr;
+    }
+  };
 
   useEffect(() => {
     const clienteSalvo = localStorage.getItem('clienteLogado');
@@ -917,7 +940,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                         <h4 className="font-bold text-slate-900 mb-2">{servicoEmEdicao?.nome}</h4>
                         <p className="text-sm text-slate-600 mb-2">R$ {servicoEmEdicao?.preco.toFixed(2)} • {servicoEmEdicao?.duracao || 30} min</p>
                         <p className="text-xs text-slate-500">
-                          {new Date(diaAtual).toLocaleDateString('pt-BR')} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao || 30)}
+                          {formatarDataString(diaAtual)} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao || 30)}
                         </p>
                       </div>
                     )}
@@ -946,7 +969,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                             </button>
                           </div>
                           <p className="text-xs text-slate-500">
-                            {new Date(s.data_agendamento!).toLocaleDateString('pt-BR')} • {s.hora_agendamento} às {formatarHoraFim(s.hora_agendamento!, s.duracao)} ({s.duracao} min) • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
+                            {formatarDataString(s.data_agendamento!)} • {s.hora_agendamento} às {formatarHoraFim(s.hora_agendamento!, s.duracao)} ({s.duracao} min) • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
                           </p>
                         </div>
                       ))}
@@ -1122,7 +1145,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                         </div>
                       </div>
                       <p className="text-sm text-slate-600">
-                        <strong>{new Date(servicosSelecionados[0].data_agendamento!).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</strong> • <strong>{servicosSelecionados[0].hora_agendamento}</strong> - {formatarHoraFim(servicosSelecionados[0].hora_agendamento!, servicosSelecionados[0].duracao)}
+                        <strong>{obterDiaSemanaData(servicosSelecionados[0].data_agendamento!)}</strong> • <strong>{servicosSelecionados[0].hora_agendamento}</strong> - {formatarHoraFim(servicosSelecionados[0].hora_agendamento!, servicosSelecionados[0].duracao)}
                       </p>
                       <p className="text-xs text-slate-500 mt-2">Funcionário: {servicosSelecionados[0].profissional_id ? profissionais.find(p => p.id === servicosSelecionados[0].profissional_id)?.nome : 'Sem preferência'}</p>
                     </div>
@@ -1174,7 +1197,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
                   <h3 className="text-3xl font-bold text-slate-900 text-center mb-2">Agendamento Confirmado</h3>
                   <p className="text-xl font-semibold text-slate-700 text-center mb-2">
-                    {new Date(agendamentoConfirmado.data).toLocaleDateString('pt-BR', { month: 'long', day: 'numeric', year: 'numeric' })}, {agendamentoConfirmado.hora}
+                    {formatarDataString(agendamentoConfirmado.data)}, {agendamentoConfirmado.hora}
                   </p>
                   <p className="text-slate-600 text-center mb-8">Concluído! Vamos enviar um lembrete antes do seu agendamento.</p>
 
