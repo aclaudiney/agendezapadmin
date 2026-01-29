@@ -962,7 +962,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                       className="w-full py-2 text-cyan-600 font-bold flex items-center justify-center gap-2 hover:bg-cyan-50 rounded-lg transition-colors"
                     >
                       <Plus size={20} />
-                      Adicionar outro serviço
+                      
                     </button>
 
                     <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
