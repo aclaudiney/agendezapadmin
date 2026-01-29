@@ -78,11 +78,16 @@ const verificarEmpresaAtiva = async (req: RequestWithCompanyId, res: Response, n
 
 app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Response) => {
     const { companyId } = req.params;
+    
+    console.log('🔍 [VERIFY-COMPANY] Requisição recebida:', companyId);
 
     try {
         const empresa = await db.getEmpresa(companyId);
         
+        console.log('🔍 [VERIFY-COMPANY] Empresa encontrada:', empresa?.name);
+        
         if (!empresa) {
+            console.log('❌ [VERIFY-COMPANY] Empresa não encontrada');
             return res.status(404).json({ 
                 error: "Empresa não encontrada",
                 ativa: false
@@ -91,6 +96,7 @@ app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Res
 
         // ❌ SE EMPRESA ESTÁ BLOQUEADA
         if (!empresa.active) {
+            console.log('❌ [VERIFY-COMPANY] Empresa bloqueada');
             return res.status(403).json({ 
                 error: "Empresa bloqueada",
                 message: "Esta empresa foi desativada e não pode acessar o sistema",
@@ -100,6 +106,7 @@ app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Res
         }
 
         // ✅ EMPRESA ATIVA
+        console.log('✅ [VERIFY-COMPANY] Sucesso! Empresa ativa');
         res.json({
             success: true,
             ativa: true,
@@ -110,6 +117,7 @@ app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Res
             }
         });
     } catch (error: any) {
+        console.error('❌ [VERIFY-COMPANY] Erro:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
