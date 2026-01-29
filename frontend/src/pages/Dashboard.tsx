@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { API_URL } from '../config/api';
 import { TrendingUp, Users, Calendar, Scissors, CheckCircle2, Clock, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
@@ -40,9 +41,9 @@ const Dashboard: React.FC = () => {
 
       console.log('🔍 Verificando se empresa está ativa:', companyId);
 
-      // ✅ CHAMAR ROTA DE VERIFICAÇÃO DO BACKEND
+      // ✅ CHAMAR ROTA DE VERIFICAÇÃO DO BACKEND - CORRIGIDO!
       const resposta = await axios.get(
-        `http://localhost:3001/verify-company/${companyId}`
+        `${API_URL}/verify-company/${companyId}`
       );
 
       if (!resposta.data.ativa) {

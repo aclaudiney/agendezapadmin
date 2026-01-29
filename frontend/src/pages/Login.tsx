@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { API_URL } from '../config/api';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
@@ -52,7 +53,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         
         try {
           const resposta = await axios.get(
-            `http://localhost:3001/verify-company/${data.company_id}`
+            `${API_URL}/verify-company/${data.company_id}`
           );
 
           if (!resposta.data.ativa) {
