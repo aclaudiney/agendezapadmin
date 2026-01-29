@@ -14,6 +14,16 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [empresaBloqueada, setEmpresaBloqueada] = useState(false);
 
+  // ✅ FUNÇÃO PARA FORMATAR DATA CORRETAMENTE (SEM TIMEZONE)
+  const formatarDataString = (dataStr: string): string => {
+    try {
+      const [year, month, day] = dataStr.split('-');
+      return `${day}/${month}/${year}`;
+    } catch {
+      return dataStr;
+    }
+  };
+
   // FILTROS
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
@@ -496,7 +506,7 @@ const Dashboard: React.FC = () => {
                     const valor = servico?.preco || 0;
                     return (
                       <tr key={apt.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{apt.data_agendamento}</td>
+                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{formatarDataString(apt.data_agendamento)}</td>
                         <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{apt.hora_agendamento}</td>
                         <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{getNomeCliente(apt.cliente_id)}</td>
                         <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{getNomeServico(apt.servico_id)}</td>
@@ -557,7 +567,7 @@ const Dashboard: React.FC = () => {
                     <div className="flex justify-between items-start mb-2">
                       <div>
                         <p className="text-sm font-bold text-slate-800">{getNomeCliente(apt.cliente_id)}</p>
-                        <p className="text-xs text-slate-500">{apt.data_agendamento} • {apt.hora_agendamento}</p>
+                        <p className="text-xs text-slate-500">{formatarDataString(apt.data_agendamento)} • {apt.hora_agendamento}</p>
                       </div>
                       <p className="text-sm font-bold text-green-600">R$ {valor.toFixed(2)}</p>
                     </div>
