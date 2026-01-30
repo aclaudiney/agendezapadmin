@@ -61,6 +61,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [servicosSelecionados, setServicosSelecionados] = useState<ServicoSelecionado[]>([]);
+
   // ✅ FUNÇÃO PARA OBTER DIA DA SEMANA COM DATA CORRETA
   const obterDiaSemanaData = (dataStr: string): string => {
     const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
@@ -74,6 +75,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     
     return `${diaSemana}, ${String(day).padStart(2, '0')} de ${nomeMes}`;
   };
+
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandirHorarios, setExpandirHorarios] = useState(false);
@@ -326,15 +328,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         .eq('company_id', companyId);
 
       if (clientes && clientes.length > 0) {
+        // ✅ CLIENTE ENCONTRADO - VAI PRA CONFIRMAÇÃO
         setClienteLogado(clientes[0]);
         localStorage.setItem('clienteLogado', JSON.stringify(clientes[0]));
-        
-        if (servicosSelecionados.length > 0) {
-          setModalStep('confirmacao');
-        } else {
-          setShowBookingModal(false);
-        }
+        setModalStep('confirmacao');
       } else {
+        // ✅ CLIENTE NÃO EXISTE - PEDE NOME
         setModalStep('nome');
       }
     } catch (error: any) {
@@ -376,14 +375,10 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         throw error;
       }
 
+      // ✅ CONTA CRIADA - VAI PRA CONFIRMAÇÃO
       setClienteLogado(novoCliente);
       localStorage.setItem('clienteLogado', JSON.stringify(novoCliente));
-      
-      if (servicosSelecionados.length > 0) {
-        setModalStep('confirmacao');
-      } else {
-        setShowBookingModal(false);
-      }
+      setModalStep('confirmacao');
     } catch (error: any) {
       console.error('❌ Erro:', error);
       setErroMsg('Erro ao criar conta');
@@ -420,7 +415,6 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         const profissionalId = servico.profissional_id;
         
         if (!profissionalId) {
-          // Se sem preferência, pular validação
           continue;
         }
 
@@ -503,10 +497,10 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       return;
     }
 
-    // ✅ VALIDAR SE HORÁRIO TÁ OCUPADO (MESMO SEM PREFERÊNCIA)
+    // ✅ VALIDAR SE HORÁRIO TÁ OCUPADO
     if (profissionalAtual !== 'sem-preferencia') {
       if (isHorarioOcupado(horaAtual)) {
-        setErroMsg('Este horário já foi reservado! Escolha outro horário ou outro profissional.');
+        setErroMsg('⚠️ Este horário já foi reservado! Escolha outro horário ou outro profissional.');
         return;
       }
     }
@@ -519,12 +513,13 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     };
 
     setServicosSelecionados([...servicosSelecionados, novoServico]);
+    setModalStep('resumo');
     setServicoEmEdicao(null);
     setDiaAtual('');
     setHoraAtual('');
     setProfissionalAtual('sem-preferencia');
     setPeriodoAtual('manha');
-    setErroMsg('');  // ✅ LIMPAR ERRO APÓS ADICIONAR COM SUCESSO
+    setErroMsg('');
   };
 
   const adicionarServico = (servico: Servico) => {
@@ -545,14 +540,9 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     setPeriodoAtual('manha');
     setShowBookingModal(true);
     
-    if (clienteLogado) {
-      setModalStep('servicos');
-    } else {
-      setModalStep('telefone');
-      setTelefoneInput('');
-      setNomeInput('');
-      setErroMsg('');
-    }
+    // ✅ SEMPRE ABRE EM 'servicos' (seleção)
+    setModalStep('servicos');
+    setErroMsg('');
   };
 
   const removerServico = (index: number) => {
@@ -871,7 +861,8 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4 bg-black/50">
           <div className="w-full md:max-w-4xl rounded-t-3xl md:rounded-3xl bg-white shadow-2xl max-h-[98vh] md:max-h-[95vh] overflow-y-auto flex flex-col">
             
-            {modalStep === 'servicos' && (
+            {/* ===== STEP 1: SELEÇÃO (data, hora, profissional) ===== */}
+            {modalStep === 'servicos' && servicoEmEdicao && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
                   <h3 className="text-2xl font-bold text-slate-900">{servicoEmEdicao?.nome || getMesAnoIntervalo()}</h3>
@@ -887,229 +878,243 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                   </button>
                 </div>
 
-                {servicoEmEdicao ? (
-                  <div className="p-6 space-y-6 flex-1 overflow-y-auto">
-                    {erroMsg && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-start gap-2">
-                        <span className="text-lg">⚠️</span>
-                        <p>{erroMsg}</p>
-                      </div>
-                    )}
-                    
-                    <div>
-                      <h4 className="font-bold text-slate-900 mb-4 text-lg">Selecione a Data</h4>
-                      <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 mb-6">
-                        {proximosDias.map((dia) => {
-                          const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-                          const diaStr = dateToString(dia);
-                          const isSelected = diaAtual === diaStr;
-                          const horarioDia = obterHorarioDoDia(dia);
-                          const isClosed = !horarioDia;
-
-                          return (
-                            <button
-                              key={diaStr}
-                              onClick={() => !isClosed && setDiaAtual(diaStr)}
-                              disabled={isClosed}
-                              className={`flex flex-col items-center justify-center min-w-[90px] p-3 rounded-xl font-bold transition-all flex-shrink-0 ${
-                                isClosed
-                                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                  : isSelected
-                                  ? 'bg-cyan-600 text-white shadow-lg'
-                                  : 'bg-white border-2 border-slate-200 text-slate-900 hover:border-cyan-400'
-                              }`}
-                            >
-                              <span className="text-xs mb-1">{diasNomes[dia.getDay()]}</span>
-                              <span className="text-xl">{dia.getDate()}</span>
-                              <div className={`mt-2 w-2 h-2 rounded-full ${
-                                isClosed ? 'bg-slate-400' :
-                                isSelected ? 'bg-white' : 'bg-green-500'
-                              }`}></div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                  {erroMsg && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-start gap-2">
+                      <span className="text-lg">⚠️</span>
+                      <p>{erroMsg}</p>
                     </div>
+                  )}
+                  
+                  <div>
+                    <h4 className="font-bold text-slate-900 mb-4 text-lg">Selecione a Data</h4>
+                    <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 mb-6">
+                      {proximosDias.map((dia) => {
+                        const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+                        const diaStr = dateToString(dia);
+                        const isSelected = diaAtual === diaStr;
+                        const horarioDia = obterHorarioDoDia(dia);
+                        const isClosed = !horarioDia;
 
-                    <div>
-                      <label className="block text-sm font-bold text-slate-900 mb-3">Período</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {['manha', 'tarde', 'noite'].map(p => {
-                          const periodo = p === 'manha' ? 'Manhã' : p === 'tarde' ? 'Tarde' : 'Noite';
-                          const disponivel = diaAtual ? periodosDisponiveis[p as keyof typeof periodosDisponiveis] : false;
+                        return (
+                          <button
+                            key={diaStr}
+                            onClick={() => !isClosed && setDiaAtual(diaStr)}
+                            disabled={isClosed}
+                            className={`flex flex-col items-center justify-center min-w-[90px] p-3 rounded-xl font-bold transition-all flex-shrink-0 ${
+                              isClosed
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                : isSelected
+                                ? 'bg-cyan-600 text-white shadow-lg'
+                                : 'bg-white border-2 border-slate-200 text-slate-900 hover:border-cyan-400'
+                            }`}
+                          >
+                            <span className="text-xs mb-1">{diasNomes[dia.getDay()]}</span>
+                            <span className="text-xl">{dia.getDate()}</span>
+                            <div className={`mt-2 w-2 h-2 rounded-full ${
+                              isClosed ? 'bg-slate-400' :
+                              isSelected ? 'bg-white' : 'bg-green-500'
+                            }`}></div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-                          return (
-                            <button
-                              key={p}
-                              onClick={() => {
-                                if (disponivel) {
-                                  setPeriodoAtual(p as any);
-                                  const horariosDoperiodo = filtrarHorariosPorPeriodo(todosHorarios, p);
-                                  if (horariosDoperiodo.length > 0) {
-                                    setHoraAtual(horariosDoperiodo[0]);
-                                  }
+                  <div>
+                    <label className="block text-sm font-bold text-slate-900 mb-3">Período</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['manha', 'tarde', 'noite'].map(p => {
+                        const periodo = p === 'manha' ? 'Manhã' : p === 'tarde' ? 'Tarde' : 'Noite';
+                        const disponivel = diaAtual ? periodosDisponiveis[p as keyof typeof periodosDisponiveis] : false;
+
+                        return (
+                          <button
+                            key={p}
+                            onClick={() => {
+                              if (disponivel) {
+                                setPeriodoAtual(p as any);
+                                const horariosDoperiodo = filtrarHorariosPorPeriodo(todosHorarios, p);
+                                if (horariosDoperiodo.length > 0) {
+                                  setHoraAtual(horariosDoperiodo[0]);
                                 }
-                              }}
-                              disabled={!disponivel}
-                              className={`py-2 rounded-lg font-bold text-sm transition-all ${
-                                disponivel
-                                  ? periodoAtual === p
-                                    ? 'bg-cyan-600 text-white'
-                                    : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                                  : 'bg-slate-50 text-slate-400 cursor-not-allowed'
-                              }`}
-                            >
-                              {periodo}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {!diaAtual && <p className="text-xs text-slate-500 mt-2">Selecione uma data primeiro</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-900 mb-3">Horário</label>
-                      {!diaAtual ? (
-                        <div className="w-full text-center py-6 text-slate-500 font-semibold bg-slate-50 rounded-lg">
-                          Selecione uma data para ver horários disponíveis
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
-                            <ChevronLeft size={20} />
+                              }
+                            }}
+                            disabled={!disponivel}
+                            className={`py-2 rounded-lg font-bold text-sm transition-all ${
+                              disponivel
+                                ? periodoAtual === p
+                                  ? 'bg-cyan-600 text-white'
+                                  : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                                : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                            }`}
+                          >
+                            {periodo}
                           </button>
-
-                          <div ref={horariosScrollRef} className="flex gap-2 overflow-x-auto pb-2 flex-1" style={{ scrollBehavior: 'smooth' }}>
-                            {todosHorarios.length > 0 ? (
-                              todosHorarios.map(hora => (
-                                <button
-                                  key={hora}
-                                  onClick={() => {
-                                    setHoraAtual(hora);
-                                    const periodoDoHorario = detectarPeriodoDoHorario(hora);
-                                    setPeriodoAtual(periodoDoHorario);
-                                  }}
-                                  className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${
-                                    horaAtual === hora
-                                      ? 'bg-cyan-600 text-white shadow-lg'
-                                      : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                                  }`}
-                                >
-                                  {hora}
-                                </button>
-                              ))
-                            ) : (
-                              <div className="w-full text-center py-3 text-red-600 font-semibold text-sm">Sem horários disponíveis</div>
-                            )}
-                          </div>
-
-                          <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
-                            <ChevronRight size={20} />
-                          </button>
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-bold text-slate-900 mb-3">Profissional</label>
-                      <select
-                        value={profissionalAtual}
-                        onChange={(e) => setProfissionalAtual(e.target.value)}
-                        className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-white text-slate-900 font-medium"
-                      >
-                        <option value="sem-preferencia">Sem preferência</option>
-                        {profissionais.map(p => (
-                          <option key={p.id} value={p.id}>{p.nome}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {diaAtual && horaAtual && (
-                      <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
-                        <h4 className="font-bold text-slate-900 mb-2">{servicoEmEdicao?.nome}</h4>
-                        <p className="text-sm text-slate-600 mb-2">R$ {servicoEmEdicao?.preco.toFixed(2)} • {servicoEmEdicao?.duracao || 30} min</p>
-                        <p className="text-xs text-slate-500">
-                          {formatarDataString(diaAtual)} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao || 30)}
-                        </p>
-                      </div>
-                    )}
-
-                    <button
-                      onClick={confirmarServico}
-                      disabled={!diaAtual || !horaAtual}
-                      className="w-full py-4 rounded-lg font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg text-lg"
-                      style={{ backgroundColor: corTema }}
-                    >
-                      Confirmar
-                    </button>
+                    {!diaAtual && <p className="text-xs text-slate-500 mt-2">Selecione uma data primeiro</p>}
                   </div>
-                ) : (
-                  <div className="p-6 space-y-6 flex-1 flex flex-col">
-                    <div className="flex-1">
-                      {servicosSelecionados.map((s, idx) => (
-                        <div key={idx} className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200 mb-3">
-                          <div className="flex justify-between items-start mb-3">
-                            <div>
-                              <h4 className="font-bold text-slate-900">{s.nome}</h4>
-                              <p className="text-sm text-slate-600 mt-1">R$ {s.preco.toFixed(2)} • {s.duracao} min</p>
-                            </div>
-                            <button onClick={() => removerServico(idx)} className="text-red-500 hover:text-red-700">
-                              <X size={20} />
-                            </button>
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            {formatarDataString(s.data_agendamento!)} • {s.hora_agendamento} às {formatarHoraFim(s.hora_agendamento!, s.duracao)} ({s.duracao} min) • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
 
-                    <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
-                      <div className="flex justify-between items-baseline mb-2">
-                        <span className="text-slate-600">Total:</span>
-                        <span className="text-3xl font-bold text-cyan-600">R$ {calcularTotal().toFixed(2)}</span>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-900 mb-3">Horário</label>
+                    {!diaAtual ? (
+                      <div className="w-full text-center py-6 text-slate-500 font-semibold bg-slate-50 rounded-lg">
+                        Selecione uma data para ver horários disponíveis
                       </div>
-                      <div className="flex justify-between text-xs text-slate-500">
-                        <span>{calcularDuracao()} minutos</span>
-                      </div>
-                    </div>
-
-                    {clienteLogado ? (
-                      <button
-                        onClick={() => setModalStep('confirmacao')}
-                        className="w-full py-4 rounded-lg font-bold text-white transition-all hover:shadow-lg text-lg"
-                        style={{ backgroundColor: corTema }}
-                      >
-                        Confirmar Agendamento
-                      </button>
                     ) : (
-                      <button
-                        onClick={() => {
-                          setModalStep('telefone');
-                          setTelefoneInput('');
-                          setErroMsg('');
-                        }}
-                        className="w-full py-4 rounded-lg font-bold text-white transition-all hover:shadow-lg text-lg"
-                        style={{ backgroundColor: corTema }}
-                      >
-                        Continuar
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
+                          <ChevronLeft size={20} />
+                        </button>
+
+                        <div ref={horariosScrollRef} className="flex gap-2 overflow-x-auto pb-2 flex-1" style={{ scrollBehavior: 'smooth' }}>
+                          {todosHorarios.length > 0 ? (
+                            todosHorarios.map(hora => (
+                              <button
+                                key={hora}
+                                onClick={() => {
+                                  setHoraAtual(hora);
+                                  const periodoDoHorario = detectarPeriodoDoHorario(hora);
+                                  setPeriodoAtual(periodoDoHorario);
+                                }}
+                                className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${
+                                  horaAtual === hora
+                                    ? 'bg-cyan-600 text-white shadow-lg'
+                                    : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                                }`}
+                              >
+                                {hora}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="w-full text-center py-3 text-red-600 font-semibold text-sm">Sem horários disponíveis</div>
+                          )}
+                        </div>
+
+                        <button className="p-2 hover:bg-slate-100 rounded-lg flex-shrink-0">
+                          <ChevronRight size={20} />
+                        </button>
+                      </div>
                     )}
                   </div>
-                )}
+
+                  <div>
+                    <label className="block text-sm font-bold text-slate-900 mb-3">Profissional</label>
+                    <select
+                      value={profissionalAtual}
+                      onChange={(e) => setProfissionalAtual(e.target.value)}
+                      className="w-full px-4 py-3 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-white text-slate-900 font-medium"
+                    >
+                      <option value="sem-preferencia">Sem preferência</option>
+                      {profissionais.map(p => (
+                        <option key={p.id} value={p.id}>{p.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {diaAtual && horaAtual && (
+                    <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
+                      <h4 className="font-bold text-slate-900 mb-2">{servicoEmEdicao?.nome}</h4>
+                      <p className="text-sm text-slate-600 mb-2">R$ {servicoEmEdicao?.preco.toFixed(2)} • {servicoEmEdicao?.duracao || 30} min</p>
+                      <p className="text-xs text-slate-500">
+                        {formatarDataString(diaAtual)} • {horaAtual} - {formatarHoraFim(horaAtual, servicoEmEdicao?.duracao || 30)}
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={confirmarServico}
+                    disabled={!diaAtual || !horaAtual}
+                    className="w-full py-4 rounded-lg font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg text-lg"
+                    style={{ backgroundColor: corTema }}
+                  >
+                    Confirmar
+                  </button>
+                </div>
               </>
             )}
 
+            {/* ===== STEP 2: RESUMO (mostra serviços selecionados) ===== */}
+            {modalStep === 'resumo' && (
+              <>
+                <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
+                  <button
+                    onClick={() => {
+                      setModalStep('servicos');
+                    }}
+                    className="text-slate-600 hover:text-slate-900"
+                  >
+                    <ArrowLeft size={24} />
+                  </button>
+                  <h3 className="text-2xl font-bold text-slate-900 flex-1">Resumo do Agendamento</h3>
+                </div>
+
+                <div className="p-6 space-y-6 flex-1 flex flex-col">
+                  <div className="flex-1">
+                    {servicosSelecionados.map((s, idx) => (
+                      <div key={idx} className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200 mb-3">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h4 className="font-bold text-slate-900">{s.nome}</h4>
+                            <p className="text-sm text-slate-600 mt-1">R$ {s.preco.toFixed(2)} • {s.duracao} min</p>
+                          </div>
+                          <button onClick={() => removerServico(idx)} className="text-red-500 hover:text-red-700">
+                            <X size={20} />
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {formatarDataString(s.data_agendamento!)} • {s.hora_agendamento} às {formatarHoraFim(s.hora_agendamento!, s.duracao)} ({s.duracao} min) • {s.profissional_id ? profissionais.find(p => p.id === s.profissional_id)?.nome : 'Sem preferência'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-slate-50 rounded-lg p-4 border-2 border-slate-200">
+                    <div className="flex justify-between items-baseline mb-2">
+                      <span className="text-slate-600">Total:</span>
+                      <span className="text-3xl font-bold text-cyan-600">R$ {calcularTotal().toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span>{calcularDuracao()} minutos</span>
+                    </div>
+                  </div>
+
+                  {clienteLogado ? (
+                    // ✅ CLIENTE LOGADO - VAI DIRETO PRA CONFIRMAÇÃO
+                    <button
+                      onClick={() => setModalStep('confirmacao')}
+                      className="w-full py-4 rounded-lg font-bold text-white transition-all hover:shadow-lg text-lg"
+                      style={{ backgroundColor: corTema }}
+                    >
+                      Confirmar Agendamento
+                    </button>
+                  ) : (
+                    // ✅ CLIENTE NÃO LOGADO - VAI PRA TELEFONE
+                    <button
+                      onClick={() => {
+                        setModalStep('telefone');
+                        setTelefoneInput('');
+                        setErroMsg('');
+                      }}
+                      className="w-full py-4 rounded-lg font-bold text-white transition-all hover:shadow-lg text-lg"
+                      style={{ backgroundColor: corTema }}
+                    >
+                      Continuar
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* ===== STEP 3: TELEFONE (pede telefone) ===== */}
             {modalStep === 'telefone' && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
                   <button
                     onClick={() => {
-                      if (servicosSelecionados.length > 0) {
-                        setModalStep('servicos');
-                      } else {
-                        setShowBookingModal(false);
-                      }
+                      setModalStep('resumo');
                     }}
                     className="text-slate-600 hover:text-slate-900"
                   >
@@ -1152,6 +1157,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
+            {/* ===== STEP 4: NOME (pede nome para criar conta) ===== */}
             {modalStep === 'nome' && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
@@ -1207,11 +1213,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
+            {/* ===== STEP 5: CONFIRMAÇÃO (bem-vindo) ===== */}
             {modalStep === 'confirmacao' && clienteLogado && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center gap-4">
                   <button
-                    onClick={() => setModalStep('servicos')}
+                    onClick={() => setModalStep('resumo')}
                     className="text-slate-600 hover:text-slate-900"
                   >
                     <ArrowLeft size={24} />
@@ -1247,6 +1254,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                     </div>
                   </div>
 
+                  {erroMsg && (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                      {erroMsg}
+                    </div>
+                  )}
+
                   <button
                     onClick={handleConfirmarReserva}
                     disabled={loadingVerificacao}
@@ -1259,6 +1272,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </>
             )}
 
+            {/* ===== STEP 6: SUCESSO (confirmação final) ===== */}
             {modalStep === 'sucesso' && agendamentoConfirmado && (
               <>
                 <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
