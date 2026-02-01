@@ -1,218 +1,229 @@
+/**
+ * AGENDAMENTO CONTROLLER - AGENDEZAP
+ * Funções auxiliares e handler de agendamentos
+ */
+
 import { db, supabase } from "./supabase.js";
-import { gerarRespostaIA } from "./aiService.js";
+import { criarAgendamento, buscarHorariosDisponiveis } from "./services/appointmentService.js";
+import { criarNovoCliente } from "./services/clientService.js";
+import { validarHorarioDisponivel, validarDiaAberto, validarDataFutura } from "./services/validationService.js";
+import { CriarAgendamentoInput } from "./types/agendamento.js";
 
-export const processarFluxoAgendamento = async (texto: string, telefone: string, companyId: string) => {
-    try {
-        // ✅ Buscar dados da empresa
-        const [profissionais, servicos, cliente] = await Promise.all([
-            db.getProfissionais(companyId),
-            db.getServicos(companyId),
-            db.getCliente(telefone, companyId)
-        ]);
+// ============================================
+// 1️⃣ FUNÇÃO PRINCIPAL: TENTAR AGENDAR
+// ============================================
 
-        // ✅ Buscar configurações da empresa
-        const { data: configAgente } = await supabase
-            .from('agente_config')
-            .select('*')
-            .eq('company_id', companyId)
-            .maybeSingle();
+export const tentarAgendar = async (
+  args: any,
+  companyId: string,
+  clienteId?: string,
+  telefone?: string
+) => {
+  try {
+    console.log('📝 [AGENDAR] Tentando agendar...');
+    console.log(`   Serviço: ${args.servico}`);
+    console.log(`   Data: ${args.data}`);
+    console.log(`   Hora: ${args.hora}`);
+    console.log(`   Profissional: ${args.profissional}`);
 
-        const { data: configLoja } = await supabase
-            .from('configuracoes')
-            .select('*')
-            .eq('company_id', companyId)
-            .maybeSingle();
-
-        if (!configLoja || !configAgente) {
-            return "Sistema em manutenção.";
-        }
-
-        const eSolo = profissionais.length === 1;
-
-        // ✅ FUNÇÃO DE AGENDAMENTO COM COMPANY_ID CORRETO
-        const tentarAgendar = async (args: any) => {
-            // --- CONVERSÃO DE DATA (SOLUÇÃO DO ERRO) ---
-            // Se vier DD/MM/YYYY, transforma em YYYY-MM-DD
-            let dataFormatada = args.data;
-            if (args.data.includes('/')) {
-                const [dia, mes, ano] = args.data.split('/');
-                dataFormatada = `${ano}-${mes}-${dia}`;
-            }
-
-            // --- BUSCAR PROFISSIONAL E SERVIÇO ---
-            const prf = profissionais.find((p: any) =>
-                p.nome.toLowerCase().includes(args.profissional.toLowerCase())
-            );
-            const srv = servicos.find((s: any) =>
-                s.nome.toLowerCase().includes(args.servico.toLowerCase())
-            );
-
-            if (!prf) {
-                return {
-                    status: "erro",
-                    mensagem: `Profissional ${args.profissional} não encontrado.`
-                };
-            }
-
-            // ✅ VERIFICAR DISPONIBILIDADE COM COMPANY_ID
-            const { data: ocupado } = await supabase
-                .from('agendamentos')
-                .select('id')
-                .eq('profissional_id', prf.id)
-                .eq('data_agendamento', dataFormatada)
-                .eq('hora_agendamento', args.hora)
-                .eq('company_id', companyId) // ✅ CRÍTICO: ADICIONAR COMPANY_ID
-                .neq('status', 'cancelado') // Ignorar agendamentos cancelados
-                .maybeSingle();
-
-            if (ocupado) {
-                return {
-                    status: "ocupado",
-                    profissional: prf.nome
-                };
-            }
-
-            // --- VERIFICA SE CLIENTE EXISTE ---
-            if (!cliente) {
-                return {
-                    status: "pedir_nome",
-                    dados: { ...args, data: dataFormatada }
-                };
-            }
-
-            // ✅ INSERIR AGENDAMENTO COM COMPANY_ID
-            const { error } = await supabase
-                .from('agendamentos')
-                .insert([{
-                    cliente_id: cliente.id,
-                    profissional_id: prf.id,
-                    servico_id: srv?.id || null,
-                    data_agendamento: dataFormatada,
-                    hora_agendamento: args.hora,
-                    company_id: companyId, // ✅ CRÍTICO: ADICIONAR COMPANY_ID
-                    origem: 'whatsapp',
-                    status: 'confirmado' // Status padrão
-                }]);
-
-            if (error) {
-                console.error("🔴 ERRO NO SUPABASE:", error.message);
-                return {
-                    status: "erro",
-                    mensagem: error.message
-                };
-            }
-
-            return {
-                status: "sucesso",
-                profissional: prf.nome,
-                servico: srv?.nome || args.servico,
-                data: dataFormatada,
-                hora: args.hora
-            };
-        };
-
-        // ✅ PREPARAR DADOS PARA IA COM COMPANY_ID E JID
-        const dadosParaIA = {
-            textoUsuario: texto,
-            companyId: companyId, // ✅ NOVO: companyId para memória de chat
-            jid: telefone, // ✅ NOVO: jid para memória de chat
-            nomeAgente: configAgente.nome_agente,
-            nomeLoja: configLoja.nome_estabelecimento,
-            promptBase: configAgente.prompt,
-            contextoCliente: cliente ? `Cliente: ${cliente.nome}` : `Novo`,
-            servicos,
-            profissionais,
-            eSolo,
-            tentarAgendar
-        };
-
-        return await gerarRespostaIA(dadosParaIA);
-
-    } catch (error) {
-        console.error("🔴 ERRO CRÍTICO:", error);
-        return "Tive um erro interno. Pode repetir?";
+    // --- CONVERSÃO DE DATA ---
+    let dataFormatada = args.data;
+    if (args.data.includes('/')) {
+      const [dia, mes, ano] = args.data.split('/');
+      dataFormatada = `${ano}-${mes}-${dia}`;
     }
+
+    console.log(`   Data formatada: ${dataFormatada}`);
+
+    // --- BUSCAR PROFISSIONAL E SERVIÇO ---
+    const profissionais = await db.getProfissionais(companyId);
+    const servicos = await db.getServicos(companyId);
+
+    const prf = profissionais.find((p: any) =>
+      p.nome.toLowerCase().includes(args.profissional.toLowerCase())
+    );
+    const srv = servicos.find((s: any) =>
+      s.nome.toLowerCase().includes(args.servico.toLowerCase())
+    );
+
+    if (!prf) {
+      console.log(`❌ Profissional ${args.profissional} não encontrado`);
+      return {
+        status: "erro",
+        mensagem: `Profissional ${args.profissional} não encontrado.`
+      };
+    }
+
+    console.log(`✅ Profissional encontrado: ${prf.nome}`);
+
+    // --- VALIDAR DIA ABERTO ---
+    const diaAberto = await validarDiaAberto(companyId, dataFormatada);
+    if (!diaAberto.aberto) {
+      console.log(`❌ Dia fechado: ${diaAberto.motivo}`);
+      return {
+        status: "erro",
+        mensagem: `Desculpa, estamos fechados nesse dia. ${diaAberto.motivo}`
+      };
+    }
+
+    console.log(`✅ Dia aberto`);
+
+    // --- VALIDAR DATA FUTURA ---
+    const hoje = new Date().toISOString().split('T')[0];
+    const dataValida = validarDataFutura(dataFormatada, hoje);
+    if (!dataValida.valida) {
+      console.log(`❌ Data inválida: ${dataValida.motivo}`);
+      return {
+        status: "erro",
+        mensagem: dataValida.motivo || "Data inválida"
+      };
+    }
+
+    console.log(`✅ Data válida`);
+
+    // --- VALIDAR HORÁRIO DISPONÍVEL ---
+    const duracao = srv?.duracao || 30;
+    const horarioDisponivel = await validarHorarioDisponivel(
+      companyId,
+      prf.id,
+      dataFormatada,
+      args.hora,
+      duracao
+    );
+
+    if (!horarioDisponivel.disponivel) {
+      console.log(`❌ Horário ocupado: ${horarioDisponivel.motivo}`);
+      return {
+        status: "ocupado",
+        profissional: prf.nome,
+        mensagem: horarioDisponivel.motivo
+      };
+    }
+
+    console.log(`✅ Horário disponível`);
+
+    // --- VERIFICAR SE CLIENTE EXISTE ---
+    if (!clienteId) {
+      console.log(`⚠️  Cliente não existe, pedindo nome...`);
+      return {
+        status: "pedir_nome",
+        dados: { ...args, data: dataFormatada }
+      };
+    }
+
+    console.log(`✅ Cliente encontrado: ${clienteId}`);
+
+    // --- CRIAR AGENDAMENTO ---
+    const novoAgendamento: CriarAgendamentoInput = {
+      cliente_id: clienteId,
+      servico_id: srv?.id || '',
+      profissional_id: prf.id,
+      data_agendamento: dataFormatada,
+      hora_agendamento: args.hora
+    };
+
+    console.log(`🔄 Criando agendamento no banco...`);
+    const resultado = await criarAgendamento(novoAgendamento, companyId);
+
+    if (resultado.status === 'erro') {
+      console.log(`❌ Erro ao criar: ${resultado.mensagem}`);
+      return resultado;
+    }
+
+    console.log(`✅ Agendamento criado com sucesso!`);
+    return {
+      status: "sucesso",
+      profissional: prf.nome,
+      servico: srv?.nome || args.servico,
+      data: dataFormatada,
+      hora: args.hora,
+      agendamento: resultado.agendamento
+    };
+  } catch (error) {
+    console.error("❌ Erro tentarAgendar:", error);
+    return {
+      status: "erro",
+      mensagem: "Erro ao processar agendamento"
+    };
+  }
 };
 
-// ✅ FUNÇÃO AUXILIAR: CRIAR CLIENTE COM COMPANY_ID
+// ============================================
+// 2️⃣ CRIAR CLIENTE (auxiliar)
+// ============================================
+
 export const criarCliente = async (
-    nome: string,
-    telefone: string,
-    companyId: string,
-    dataNascimento?: string
+  nome: string,
+  telefone: string,
+  companyId: string,
+  dataNascimento?: string
 ) => {
-    const { data, error } = await supabase
-        .from('clientes')
-        .insert([{
-            nome,
-            telefone,
-            company_id: companyId, // ✅ COMPANY_ID
-            data_nascimento: dataNascimento || null,
-            created_at: new Date()
-        }])
-        .select()
-        .single();
+  try {
+    console.log(`📝 Criando cliente: ${nome}`);
 
-    if (error) {
-        console.error("❌ Erro ao criar cliente:", error.message);
-        return null;
+    const resultado = await criarNovoCliente(
+      {
+        nome,
+        telefone,
+        data_nascimento: dataNascimento
+      },
+      companyId
+    );
+
+    if (resultado.sucesso && resultado.cliente) {
+      console.log(`✅ Cliente criado: ${resultado.cliente.id}`);
+      return resultado.cliente;
+    } else {
+      console.log(`❌ Erro ao criar cliente: ${resultado.erro}`);
+      return null;
     }
-
-    return data;
+  } catch (error) {
+    console.error("❌ Erro criarCliente:", error);
+    return null;
+  }
 };
 
-// ✅ FUNÇÃO AUXILIAR: BUSCAR HORÁRIOS DISPONÍVEIS
+// ============================================
+// 3️⃣ BUSCAR HORÁRIOS DISPONÍVEIS (auxiliar)
+// ============================================
+
 export const getHorariosDisponiveis = async (
-    profissionalId: string,
-    dataAgendamento: string,
-    companyId: string
+  profissionalId: string,
+  dataAgendamento: string,
+  companyId: string
+): Promise<string[]> => {
+  try {
+    console.log(`🕐 Buscando horários disponíveis...`);
+    console.log(`   Profissional: ${profissionalId}`);
+    console.log(`   Data: ${dataAgendamento}`);
+
+    const horarios = await buscarHorariosDisponiveis(
+      companyId,
+      profissionalId,
+      dataAgendamento,
+      30 // duração padrão
+    );
+
+    console.log(`✅ ${horarios.length} horários disponíveis`);
+    return horarios;
+  } catch (error) {
+    console.error("❌ Erro getHorariosDisponiveis:", error);
+    return [];
+  }
+};
+
+// ============================================
+// 4️⃣ FUNÇÃO LEGACY (compatibilidade)
+// ============================================
+
+export const processarFluxoAgendamento = async (
+  texto: string,
+  telefone: string,
+  companyId: string
 ) => {
-    try {
-        const { data: config } = await supabase
-            .from('configuracoes')
-            .select('hora_abertura, hora_fechamento')
-            .eq('company_id', companyId)
-            .single();
-
-        if (!config) {
-            return [];
-        }
-
-        // Buscar horários ocupados
-        const { data: ocupados } = await supabase
-            .from('agendamentos')
-            .select('hora_agendamento')
-            .eq('profissional_id', profissionalId)
-            .eq('data_agendamento', dataAgendamento)
-            .eq('company_id', companyId) // ✅ COMPANY_ID
-            .neq('status', 'cancelado');
-
-        const horariosOcupados = ocupados?.map((a: any) => a.hora_agendamento) || [];
-
-        // Gerar horários disponíveis (exemplo: 09:00 até 18:00, intervalo 30min)
-        const horarios = [];
-        const [horaAbertura, minAbertura] = (config.hora_abertura || '09:00').split(':');
-        const [horaFechamento, minFechamento] = (config.hora_fechamento || '18:00').split(':');
-
-        let hora = parseInt(horaAbertura);
-        let min = parseInt(minAbertura);
-
-        while (hora < parseInt(horaFechamento) || (hora === parseInt(horaFechamento) && min < parseInt(minFechamento))) {
-            const horarioFormatado = `${String(hora).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-            if (!horariosOcupados.includes(horarioFormatado)) {
-                horarios.push(horarioFormatado);
-            }
-
-            min += 30;
-            if (min >= 60) {
-                min = 0;
-                hora += 1;
-            }
-        }
-
-        return horarios;
-    } catch (error) {
-        console.error("❌ Erro ao buscar horários:", error);
-        return [];
-    }
+  // Esta função foi refatorada!
+  // Agora o fluxo usa: messageHandler → conversationPipeline → aiService
+  console.log('⚠️ processarFluxoAgendamento é legacy!');
+  console.log('Use o novo fluxo: messageHandler → conversationPipeline → aiService');
+  return "Sistema em atualização. Use o novo fluxo!";
 };
