@@ -2,12 +2,14 @@
  * MESSAGE HANDLER - AGENDEZAP
  * Recebe mensagem do WhatsApp, limpa, formata e prepara contexto para IA
  * Este é o NODE DE ENTRADA do fluxo!
+ * 
+ * ✅ CORRIGIDO: Import e chamada da função extrairDadosMensagem
  */
 
 import { ConversationContext, TipoConversa } from '../types/conversation.js';
 import { obterDadosClienteParaIA, formatarTelefone } from '../services/clientService.js';
 import { buscarAgendamentosCliente, buscarProximoAgendamento } from '../services/appointmentService.js';
-import { extrairDados } from '../services/extractionService.js';
+import { extrairDadosMensagem } from '../services/extractionService.js'; // ✅ CORRIGIDO!
 import { validarEEnriquecerContexto } from '../services/validationPipeline.js';
 import { db } from '../supabase.js';
 
@@ -261,7 +263,7 @@ export const montarContextoConversa = async (
 };
 
 // ============================================
-// 3️⃣B EXTRAIR DADOS DA MENSAGEM
+// 3️⃣B EXTRAIR DADOS DA MENSAGEM (✅ CORRIGIDO!)
 // ============================================
 
 export const extrairDadosMensagem = async (
@@ -271,16 +273,12 @@ export const extrairDadosMensagem = async (
   try {
     console.log(`\n📊 Extraindo dados da mensagem...`);
     
-    const dadosExtraidos = await extrairDados(
-      mensagem,
-      contexto.servicos.map(s => s.nome),
-      contexto.profissionais.map(p => p.nome),
-      contexto.dataAtual
-    );
+    // ✅ CHAMA A FUNÇÃO IMPORTADA COM O CONTEXTO COMPLETO
+    const dadosExtraidos = await extrairDadosMensagem(mensagem, contexto);
 
     return dadosExtraidos;
   } catch (error) {
-    console.error('❌ Erro extrairDadosMensagem:', error);
+    console.error('❌ Erro ao extrair dados:', error);
     return {
       servico: null,
       data: null,
