@@ -598,12 +598,15 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
         if (resultadoAgendamento.status === 'sucesso') {
             console.log(`   Agendamento criado com sucesso!`);
             
-            const [ano, mes, dia] = resultadoAgendamento.data.split('-');
+            // Forçamos o tipo para 'any' para o TypeScript parar de reclamar das propriedades
+            const res = resultadoAgendamento as any;
+            
+            const [ano, mes, dia] = res.data.split('-');
             const dataFormatadaMostra = `${dia}/${mes}/${ano}`;
             const nomeClienteFinal = args.nomeCliente || dados.clienteNome || 'Cliente';
             
             return {
-                mensagem: `✅ Agendamento confirmado ${nomeClienteFinal}!\n\n📋 ${resultadoAgendamento.servico}\n📅 ${dataFormatadaMostra} às ${resultadoAgendamento.hora}\n👤 ${resultadoAgendamento.profissional}\n\nAté logo! 👋`,
+                mensagem: `✅ Agendamento confirmado ${nomeClienteFinal}!\n\n📋 ${res.servico}\n📅 ${dataFormatadaMostra} às ${res.hora}\n👤 ${res.profissional}\n\nAté logo! 👋`,
                 sucesso: true
             };
         }

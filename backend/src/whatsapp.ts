@@ -198,7 +198,7 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
                         'buffer',
                         {},
                         {
-                            logger: console,
+                            logger: console as any,
                             reuploadRequest: sock.updateMediaMessage
                         }
                     );
@@ -245,7 +245,7 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
                         'buffer',
                         {},
                         {
-                            logger: console,
+                            logger: console as any,
                             reuploadRequest: sock.updateMediaMessage
                         }
                     );
