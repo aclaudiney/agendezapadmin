@@ -251,7 +251,7 @@ export const extrairDadosMensagem = async (
     console.log(`   Mensagem: "${mensagem}"`);
 
     // ✅ CHAVE ÚNICA POR USUÁRIO
-    const memKey = `${contexto.companyId}_${contexto.telefone}`;
+    const memKey = `${contexto.companyId}_${contexto.jid}`;
 
     // ✅ RECUPERAR DADOS ANTERIORES (se existir)
     let dadosAcumulados = dadosConversaMemoria[memKey] || {
@@ -382,8 +382,8 @@ export const extrairDadosMensagem = async (
 // ✅ LIMPAR MEMÓRIA (chamar após confirmar agendamento)
 // ============================================
 
-export const limparDadosConversaMemoria = (companyId: string, telefone: string) => {
-  const memKey = `${companyId}_${telefone}`;
+export const limparDadosConversaMemoria = (companyId: string, jid: string) => {
+  const memKey = `${companyId}_${jid}`;
   if (dadosConversaMemoria[memKey]) {
     delete dadosConversaMemoria[memKey];
     console.log(`🗑️ [EXTRACTION] Memória de conversa limpa: ${memKey}`);
