@@ -1,6 +1,8 @@
 /**
  * APPOINTMENT SERVICE - AGENDEZAP
  * Cria, cancela, remarcar e consulta agendamentos
+ * 
+ * ✅ CORRIGIDO: buscarHorariosDisponiveis agora usa horario_segunda/terca/etc
  */
 
 import { db, supabase } from '../supabase.js';
@@ -302,6 +304,7 @@ export const adicionarObservacao = async (
 
 // ============================================
 // 7️⃣ BUSCAR HORÁRIOS DISPONÍVEIS
+// ✅ CORRIGIDO: Agora usa horario_segunda, horario_terca, etc
 // ============================================
 
 export const buscarHorariosDisponiveis = async (
@@ -311,13 +314,22 @@ export const buscarHorariosDisponiveis = async (
   duracao: number
 ): Promise<string[]> => {
   try {
+    // ✅ CORRIGIDO: Buscar configuração completa
     const { data: config } = await supabase
       .from('configuracoes')
-      .select('hora_abertura, hora_fechamento')
+      .select('*')
       .eq('company_id', companyId)
       .single();
 
     if (!config) return [];
+
+    // ✅ CORRIGIDO: Pegar dia da semana COM TIMEZONE
+    const dataObj = new Date(`${data}T12:00:00-03:00`);
+    const diaSemana = dataObj.getDay();
+    const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+    const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
+
+    if (horarioDoDia === 'FECHADO' || !horarioDoDia) return [];
 
     const { data: ocupados } = await supabase
       .from('agendamentos')
@@ -329,8 +341,9 @@ export const buscarHorariosDisponiveis = async (
 
     const horariosOcupados = (ocupados || []).map((a: any) => a.hora_agendamento);
 
-    const [horaAbertura, minAbertura] = (config.hora_abertura || '09:00').split(':').map(Number);
-    const [horaFechamento, minFechamento] = (config.hora_fechamento || '18:00').split(':').map(Number);
+    // ✅ CORRIGIDO: Usar horarioDoDia (ex: "09:00-18:00")
+    const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
+    const [horaFechamento, minFechamento] = horarioDoDia.split('-')[1].split(':').map(Number);
 
     const horarios: string[] = [];
     let hora = horaAbertura;

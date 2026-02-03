@@ -328,10 +328,19 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         .eq('company_id', companyId);
 
       if (clientes && clientes.length > 0) {
-        // ✅ CLIENTE ENCONTRADO - VAI PRA CONFIRMAÇÃO
+        // ✅ CLIENTE ENCONTRADO
         setClienteLogado(clientes[0]);
         localStorage.setItem('clienteLogado', JSON.stringify(clientes[0]));
-        setModalStep('confirmacao');
+        
+        // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
+        // ✅ SE NÃO TEM, FECHA O MODAL (login feito com sucesso)
+        if (servicosSelecionados.length > 0) {
+          setModalStep('confirmacao');
+        } else {
+          setShowBookingModal(false);
+          setTelefoneInput('');
+          setNomeInput('');
+        }
       } else {
         // ✅ CLIENTE NÃO EXISTE - PEDE NOME
         setModalStep('nome');
@@ -375,10 +384,20 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         throw error;
       }
 
-      // ✅ CONTA CRIADA - VAI PRA CONFIRMAÇÃO
+      // ✅ CONTA CRIADA
       setClienteLogado(novoCliente);
       localStorage.setItem('clienteLogado', JSON.stringify(novoCliente));
-      setModalStep('confirmacao');
+      
+      // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
+      // ✅ SE NÃO TEM, FECHA O MODAL (conta criada com sucesso)
+      if (servicosSelecionados.length > 0) {
+        setModalStep('confirmacao');
+      } else {
+        setShowBookingModal(false);
+        setTelefoneInput('');
+        setNomeInput('');
+        alert('✅ Conta criada com sucesso!');
+      }
     } catch (error: any) {
       console.error('❌ Erro:', error);
       setErroMsg('Erro ao criar conta');

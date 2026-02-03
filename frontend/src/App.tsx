@@ -23,7 +23,7 @@ import WhatsappConfig from './pages/WhatsappConfig';
 import AdminDashboard from './pages/admin/AdminDashboard';
 
 // ============================================
-// APP PRINCIPAL
+// APP PRINCIPAL - ✅ CORRIGIDO
 // ============================================
 const App: React.FC = () => {
   const [autenticado, setAutenticado] = useState(false);
@@ -34,28 +34,55 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [clienteLogado, setClienteLogado] = useState<any>(null);
 
-  // ✅ CARREGAR DADOS DO LOCALSTORAGE UMA ÚNICA VEZ
+  // ✅ CARREGAR DADOS DO LOCALSTORAGE UMA ÚNICA VEZ - CORRIGIDO
   useEffect(() => {
-    try {
-      const usuarioSalvo = localStorage.getItem('usuario');
-      const autenticadoSalvo = localStorage.getItem('autenticado');
-      const roleStoraged = localStorage.getItem('userRole') as 'admin' | 'empresa' | null;
+    const verificarECarregar = async () => {
+      try {
+        console.log('🔍 [APP] Verificando autenticação...');
 
-      if (usuarioSalvo && autenticadoSalvo === 'true') {
-        setUsuario(JSON.parse(usuarioSalvo));
-        setAutenticado(true);
-        setUserRole(roleStoraged);
-      }
+        const usuarioSalvo = localStorage.getItem('usuario');
+        const autenticadoSalvo = localStorage.getItem('autenticado');
+        const roleStoraged = localStorage.getItem('userRole') as 'admin' | 'empresa' | null;
 
-      const clienteSalvo = localStorage.getItem('clienteLogado');
-      if (clienteSalvo) {
-        setClienteLogado(JSON.parse(clienteSalvo));
+        // ✅ SE TEM DADOS SALVOS, VALIDAR SE SÃO VÁLIDOS
+        if (usuarioSalvo && autenticadoSalvo === 'true') {
+          try {
+            const usuario = JSON.parse(usuarioSalvo);
+            
+            // Verificar se tem campos essenciais
+            if (usuario && usuario.email && roleStoraged) {
+              console.log('✅ [APP] Sessão válida encontrada');
+              setUsuario(usuario);
+              setAutenticado(true);
+              setUserRole(roleStoraged);
+            } else {
+              console.warn('⚠️ [APP] Dados incompletos - limpando...');
+              localStorage.clear();
+            }
+          } catch (parseError) {
+            console.error('❌ [APP] Erro ao parsear usuário - limpando cache');
+            localStorage.clear();
+          }
+        }
+
+        const clienteSalvo = localStorage.getItem('clienteLogado');
+        if (clienteSalvo) {
+          try {
+            setClienteLogado(JSON.parse(clienteSalvo));
+          } catch (e) {
+            console.error('❌ [APP] Erro ao parsear cliente');
+            localStorage.removeItem('clienteLogado');
+          }
+        }
+      } catch (error) {
+        console.error('❌ [APP] Erro crítico ao carregar dados:', error);
+        localStorage.clear();
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error);
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    verificarECarregar();
   }, []);
 
   const handleLoginSuccess = () => {
@@ -115,7 +142,10 @@ const App: React.FC = () => {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-50">
-        <p className="text-slate-500">Carregando...</p>
+        <div className="text-center">
+          <div className="inline-block w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+          <p className="text-slate-500">Carregando...</p>
+        </div>
       </div>
     );
   }
@@ -185,7 +215,13 @@ const App: React.FC = () => {
   }
 
   // ✅ ADMIN - MOSTRAR ADMIN DASHBOARD
-  if (userRole === 'admin' && pathname === '/admin/dashboard') {
+  if (userRole === 'admin') {
+    // Se tentar acessar outra rota que não seja admin, redirecionar
+    if (pathname !== '/admin/dashboard' && pathname !== '/') {
+      window.location.href = '/admin/dashboard';
+      return null;
+    }
+
     return (
       <div className="flex min-h-screen">
         <div className="flex-1 p-8 bg-slate-50">
@@ -258,10 +294,29 @@ const App: React.FC = () => {
     );
   }
 
-  // ✅ FALLBACK - REDIRECIONAR
+  // ============================================
+  // ❌ FALLBACK - LIMPAR E REDIRECIONAR (CORRIGIDO!)
+  // ============================================
+  console.error('🚨 [APP] Estado inválido detectado - limpando cache');
+  console.log('   autenticado:', autenticado);
+  console.log('   userRole:', userRole);
+  console.log('   pathname:', pathname);
+
+  // Limpar tudo
+  localStorage.clear();
+  sessionStorage.clear();
+
+  // Redirecionar para login
+  setTimeout(() => {
+    window.location.href = '/login';
+  }, 100);
+
   return (
     <div className="flex items-center justify-center h-screen bg-slate-50">
-      <p className="text-slate-500">Redirecionando...</p>
+      <div className="text-center">
+        <div className="inline-block w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+        <p className="text-slate-500">Limpando cache e redirecionando...</p>
+      </div>
     </div>
   );
 };

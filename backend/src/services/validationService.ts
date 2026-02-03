@@ -1,6 +1,10 @@
 /**
  * VALIDATION SERVICE - AGENDEZAP
  * Valida datas, horários, dias fechados, disponibilidade, etc
+ * 
+ * ✅ CORRIGIDO:
+ * - Timezone UTC → Brasil
+ * - Busca de horários usa horario_segunda, horario_terca, etc
  */
 
 import { supabase } from '../supabase.js';
@@ -26,9 +30,9 @@ export const validarDiaAberto = async (
       return { aberto: false, motivo: 'Configuração não encontrada' };
     }
 
-    // Converter data YYYY-MM-DD para dia da semana (0=domingo, 1=segunda...)
-    const dataObj = new Date(`${data}T00:00:00`);
-    const diaSemana = dataObj.getUTCDay(); // 0=dom, 1=seg, 2=ter, etc
+    // ✅ CORRIGIDO: Converter data YYYY-MM-DD para dia da semana COM TIMEZONE BRASIL
+    const dataObj = new Date(`${data}T12:00:00-03:00`); // Força horário Brasil
+    const diaSemana = dataObj.getDay(); // ✅ Usa .getDay() em vez de .getUTCDay()
 
     // Nomes dos dias
     const nomesDia = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
@@ -145,9 +149,9 @@ export const validarHorarioDisponivel = async (
       return { disponivel: false, motivo: 'Configuração não encontrada' };
     }
 
-    // Converter data pra dia da semana
-    const dataObj = new Date(`${data}T00:00:00`);
-    const diaSemana = dataObj.getUTCDay();
+    // ✅ CORRIGIDO: Converter data pra dia da semana COM TIMEZONE
+    const dataObj = new Date(`${data}T12:00:00-03:00`);
+    const diaSemana = dataObj.getDay();
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
     const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
 
@@ -347,6 +351,7 @@ export const determinarPeriodosDisponiveis = async (
 
 // ============================================
 // 5️⃣ BUSCAR HORÁRIOS DISPONÍVEIS (de um profissional)
+// ✅ CORRIGIDO: Agora usa horario_segunda, horario_terca, etc
 // ============================================
 
 export const buscarHorariosDisponiveis = async (
@@ -356,7 +361,7 @@ export const buscarHorariosDisponiveis = async (
   duracaoServico: number // minutos
 ): Promise<string[]> => {
   try {
-    // Buscar configuração (horários de abertura)
+    // Buscar configuração
     const { data: config } = await supabase
       .from('configuracoes')
       .select('*')
@@ -365,9 +370,9 @@ export const buscarHorariosDisponiveis = async (
 
     if (!config) return [];
 
-    // Pegar dia da semana
-    const dataObj = new Date(`${data}T00:00:00`);
-    const diaSemana = dataObj.getUTCDay();
+    // ✅ CORRIGIDO: Pegar dia da semana COM TIMEZONE
+    const dataObj = new Date(`${data}T12:00:00-03:00`);
+    const diaSemana = dataObj.getDay();
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
     const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
 
@@ -384,7 +389,7 @@ export const buscarHorariosDisponiveis = async (
 
     const horariosOcupados = (agendamentos || []).map((a: any) => a.hora_agendamento);
 
-    // Gerar slots de 30 em 30 minutos
+    // ✅ CORRIGIDO: Usar horarioDoDia (ex: "09:00-18:00")
     const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
     const [horaFechamento, minFechamento] = horarioDoDia.split('-')[1].split(':').map(Number);
 

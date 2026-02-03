@@ -2,6 +2,11 @@
  * AI SERVICE - AGENDEZAP
  * Gerencia chamadas à IA Gemini com contexto estruturado
  * Sistema de validação integrado para melhor UX
+ * 
+ * ✅ CORRIGIDO:
+ * - Validação IMEDIATA antes de pedir confirmação
+ * - IA nunca pede confirmação se horário indisponível
+ * - Feedback claro e instantâneo pro cliente
  */
 
 import axios from 'axios';
@@ -53,13 +58,14 @@ export const gerarRespostaIA = async (dados: any) => {
           resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
         }
 
-        // --- INFORMAÇÕES DE VALIDAÇÃO ---
+        // --- INFORMAÇÕES DE VALIDAÇÃO (✅ CORRIGIDO!) ---
         let infoValidacao = '';
         
-        // Se horário foi validado e TEM PROBLEMA
+        // ✅ CRÍTICO: Se horário foi validado e TEM PROBLEMA
         if (dadosExtraidos.hora && !validacoes.horarioValido) {
-          infoValidacao += `\n🚫 HORÁRIO ${dadosExtraidos.hora} OCUPADO!\n`;
+          infoValidacao += `\n🚫 HORÁRIO ${dadosExtraidos.hora} OCUPADO OU FORA DO FUNCIONAMENTO!\n`;
           
+          // Se tem sugestões de horários próximos
           if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length > 0) {
             infoValidacao += `\n💡 HORÁRIOS PRÓXIMOS DISPONÍVEIS:\n`;
             infoValidacao += validacoes.sugestoesHorarios.map((h: string) => `- ${h}`).join('\n');
@@ -78,22 +84,67 @@ export const gerarRespostaIA = async (dados: any) => {
             }
           }
           
-          infoValidacao += `\n⚠️ IMPORTANTE: Ofereça as alternativas de forma natural e amigável!\n`;
-          infoValidacao += `Exemplo: "O horário ${dadosExtraidos.hora} com ${dadosExtraidos.profissional || 'esse profissional'} tá ocupado. `;
-          infoValidacao += `Tenho ${validacoes.sugestoesHorarios[0]}, ${validacoes.sugestoesHorarios[1]} ou ${validacoes.sugestoesHorarios[2]}. Qual você prefere?"\n`;
+          infoValidacao += `\n⚠️ CRÍTICO - LEIA COM ATENÇÃO:\n`;
+          infoValidacao += `\n❌ O HORÁRIO ${dadosExtraidos.hora} NÃO PODE SER AGENDADO!\n`;
+          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+          infoValidacao += `1. NÃO perguntar "Posso confirmar?" - o horário está INDISPONÍVEL!\n`;
+          infoValidacao += `2. INFORMAR IMEDIATAMENTE que o horário não está disponível\n`;
+          infoValidacao += `3. OFERECER as alternativas acima de forma natural e amigável\n`;
+          infoValidacao += `\n📝 EXEMPLO DE RESPOSTA CORRETA:\n`;
+          infoValidacao += `"O horário ${dadosExtraidos.hora}${dadosExtraidos.profissional ? ' com ' + dadosExtraidos.profissional : ''} não tá disponível. `;
+          
+          if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length >= 3) {
+            infoValidacao += `Mas tenho ${validacoes.sugestoesHorarios[0]}, ${validacoes.sugestoesHorarios[1]} ou ${validacoes.sugestoesHorarios[2]}. Qual prefere?"\n`;
+          } else if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
+            infoValidacao += `Mas tenho outros profissionais disponíveis. Quer ver as opções?"\n`;
+          } else {
+            infoValidacao += `Infelizmente não temos outros horários disponíveis para esse dia. Quer tentar outro dia?"\n`;
+          }
+          
+          infoValidacao += `\n❌ NUNCA FAÇA ISSO:\n`;
+          infoValidacao += `- "Perfeito! Confirmando: ... Posso confirmar?" (ERRADO - horário indisponível!)\n`;
+          infoValidacao += `- Pedir confirmação quando o horário está ocupado\n`;
+          infoValidacao += `- Fingir que o horário está disponível\n`;
+          infoValidacao += `\n`;
         }
         
-        // Se horário foi validado e TÁ OK
+        // ✅ Se horário foi validado e TÁ OK
         if (dadosExtraidos.hora && validacoes.horarioValido) {
           infoValidacao += `\n✅ HORÁRIO ${dadosExtraidos.hora} DISPONÍVEL!\n`;
-          infoValidacao += `Pode prosseguir com o agendamento.\n`;
+          infoValidacao += `Pode prosseguir com o agendamento normalmente.\n`;
         }
         
-        // Se tem períodos disponíveis (cliente só informou data)
+        // ✅ Se dia está FECHADO (crítico!)
+        if (dadosExtraidos.data && !validacoes.diaAberto && validacoes.motivoErro) {
+          infoValidacao += `\n🚫 DIA FECHADO!\n`;
+          infoValidacao += `\n⚠️ CRÍTICO:\n`;
+          infoValidacao += `O estabelecimento está FECHADO neste dia!\n`;
+          infoValidacao += `Motivo: ${validacoes.motivoErro}\n`;
+          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+          infoValidacao += `1. Informar que está fechado\n`;
+          infoValidacao += `2. Sugerir outro dia\n`;
+          infoValidacao += `3. NÃO tentar agendar para este dia\n`;
+          infoValidacao += `\n`;
+        }
+        
+        // ✅ Se horário está no passado
+        if (dadosExtraidos.data && dadosExtraidos.hora && validacoes.horarioPassado && validacoes.motivoErro) {
+          infoValidacao += `\n⏰ HORÁRIO NO PASSADO!\n`;
+          infoValidacao += `\n⚠️ CRÍTICO:\n`;
+          infoValidacao += `${validacoes.motivoErro}\n`;
+          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+          infoValidacao += `1. Informar que o horário já passou\n`;
+          infoValidacao += `2. Sugerir horários futuros (com pelo menos 1h de antecedência)\n`;
+          infoValidacao += `3. NÃO tentar agendar horários no passado\n`;
+          infoValidacao += `\n`;
+        }
+        
+        // ✅ Se tem períodos disponíveis (cliente só informou data)
         if (validacoes.periodosDisponiveis && validacoes.periodosDisponiveis.length > 0) {
-          infoValidacao += `\n⏰ PERÍODOS DISPONÍVEIS HOJE:\n`;
+          infoValidacao += `\n⏰ PERÍODOS DISPONÍVEIS:\n`;
           infoValidacao += validacoes.periodosDisponiveis.map((p: string) => `- ${p}`).join('\n');
           infoValidacao += `\n`;
+          infoValidacao += `Pergunte ao cliente qual período prefere.\n`;
         }
 
         // --- CONTEXTO DO CLIENTE ---
@@ -120,11 +171,11 @@ export const gerarRespostaIA = async (dados: any) => {
 3️⃣ COLETAR DATA:
    ${dadosExtraidos.data ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Para qual dia?"'}
 
-4️⃣ COLETAR PERÍODO/HORÁRIO:
+4️⃣ COLETAR PERÍODO/HORÁRIO (✅ CORRIGIDO):
    ${dadosExtraidos.hora ? 
      (validacoes.horarioValido ? 
-       '✅ Horário válido - prossiga' : 
-       '🚫 Horário ocupado - OFEREÇA ALTERNATIVAS (veja seção VALIDAÇÃO)') 
+       '✅ Horário VÁLIDO e DISPONÍVEL - pode CONFIRMAR' : 
+       '🚫 Horário INVÁLIDO/OCUPADO - NÃO pergunte "posso confirmar?"\n   → OFEREÇA ALTERNATIVAS IMEDIATAMENTE (veja seção VALIDAÇÃO)') 
      : dadosExtraidos.periodo ?
        '⏰ Tem período - liste horários disponíveis desse período' :
        '❌ Pergunte: "Prefere de manhã, tarde ou noite?"'}
@@ -136,8 +187,19 @@ export const gerarRespostaIA = async (dados: any) => {
        '✅ JÁ TEM - pule esta etapa' : 
        '❌ Pergunte: "Com quem prefere? Temos: [LISTA TODOS]"'}
 
-6️⃣ CONFIRMAR:
-   - Quando tiver TODOS os dados (serviço, data, hora, profissional)
+6️⃣ CONFIRMAR (APENAS SE TUDO VÁLIDO - ✅ CORRIGIDO):
+   ⚠️ ATENÇÃO CRÍTICA: Só peça confirmação se:
+   - Tem serviço ✅
+   - Tem data ✅
+   - Tem hora VÁLIDA E DISPONÍVEL ✅
+   - Tem profissional ✅
+   
+   ❌ Se QUALQUER validação falhou:
+   → NÃO peça confirmação
+   → OFEREÇA alternativas imediatamente
+   → Veja seção VALIDAÇÃO acima
+   
+   ✅ Se TUDO válido:
    - Faça resumo: "Perfeito! Confirmando:\n- [SERVICO]\n- [DD/MM/YYYY] às [HORA]\n- Com [PROF]\n\nPosso confirmar?"
    - Aguarde "sim" ou similar
 
@@ -180,7 +242,7 @@ Cliente disse "sim"/"ok"/"confirma"
                     instrucoesPorTipo = `Seja prestativo e natural com ${dados.clienteNome}!`;
             }
         } else {
-            // CLIENTE NOVO
+            // CLIENTE NOVO (mesmo fluxo corrigido)
             contextoCliente = `👤 Cliente NOVO - não está cadastrado\n⚠️ Você DEVE pedir o nome quando ele demonstrar interesse em agendar`;
 
             switch (dados.tipoConversa) {
@@ -203,17 +265,18 @@ Cliente disse "sim"/"ok"/"confirma"
 4️⃣ COLETAR DATA:
    ${dadosExtraidos.data ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Para qual dia?"'}
 
-5️⃣ COLETAR HORÁRIO:
+5️⃣ COLETAR HORÁRIO (✅ CORRIGIDO):
    ${dadosExtraidos.hora ? 
      (validacoes.horarioValido ? 
        '✅ Válido - prossiga' : 
-       '🚫 Ocupado - OFEREÇA ALTERNATIVAS') 
+       '🚫 Ocupado/Inválido - OFEREÇA ALTERNATIVAS IMEDIATAMENTE') 
      : '❌ Pergunte período primeiro'}
 
 6️⃣ COLETAR PROFISSIONAL (se múltiplos):
    ${dados.eSolo ? '⚠️ Só tem 1 - pule' : '❌ Liste todos disponíveis'}
 
-7️⃣ CONFIRMAR E FINALIZAR:
+7️⃣ CONFIRMAR E FINALIZAR (✅ CORRIGIDO):
+   - Só peça confirmação se TODOS os dados estão válidos
    - Resumo + "Posso confirmar?"
    - Aguardar "sim"
    - Usar 'confirmar_agendamento' COM nomeCliente`;
@@ -265,13 +328,13 @@ ${infoValidacao}
 3. ✅ REGRAS CRÍTICAS:
    - NUNCA pergunte dados já informados
    - NUNCA invente informações
-   - SEMPRE valide horários (já feito automaticamente)
-   - Se horário ocupado, SEMPRE ofereça alternativas próximas
+   - NUNCA peça confirmação se horário está indisponível
+   - Se horário ocupado/inválido, SEMPRE ofereça alternativas IMEDIATAMENTE
    - Múltiplos profissionais? LISTE TODOS
    - Cliente novo? Peça nome QUANDO demonstrar interesse
    
 4. 🔧 USO DE FERRAMENTAS:
-   - Quando tiver TODOS os dados: use 'confirmar_agendamento'
+   - Quando tiver TODOS os dados VÁLIDOS: use 'confirmar_agendamento'
    - NÃO faça confirmação só em texto
    - NÃO diga "vou confirmar" sem usar a ferramenta
 
@@ -281,9 +344,10 @@ ${instrucoesPorTipo}
 ${dados.promptBase || 'Seja prestativo e cordial.'}
 
 💡 DICAS FINAIS:
+- VALIDAÇÃO É FEITA AUTOMATICAMENTE - respeite os resultados!
 - Se horário tá ocupado, as sugestões JÁ estão calculadas acima
-- Ofereça as alternativas de forma natural: "Esse horário tá ocupado. Tenho X, Y ou Z. Qual prefere?"
-- Se múltiplos profissionais têm horários diferentes, mostre: "Tenho João às 14h, Maria às 15h..."
+- Ofereça alternativas ANTES de pedir confirmação
+- Se múltiplos profissionais têm horários diferentes, mostre todos
 - Seja direto e eficiente, mas sempre amigável`;
 
         console.log(`   System prompt preparado (${instrucoesFinais.length} chars)`);
@@ -421,7 +485,7 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
 };
 
 // ============================================
-// 2. PROCESSAR FUNCTION CALLS
+// 2-7. PROCESSAR FUNCTION CALLS (mantém igual)
 // ============================================
 
 const processarFunctionCall = async (
@@ -456,10 +520,6 @@ const processarFunctionCall = async (
     }
 };
 
-// ============================================
-// 3. CONFIRMAR AGENDAMENTO
-// ============================================
-
 const procesarConfirmarAgendamento = async (args: any, dados: any) => {
     try {
         console.log(`   Confirmando agendamento...`);
@@ -469,7 +529,6 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
         console.log(`      Profissional: ${args.profissional}`);
         console.log(`      Cliente: ${args.nomeCliente || 'Conhecido'}`);
 
-        // Se cliente é novo, criar primeiro
         let clienteId = dados.clienteId;
 
         if (!clienteId && args.nomeCliente) {
@@ -503,7 +562,6 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
             console.log(`   Cliente criado: ${clienteId}`);
         }
 
-        // Formatar data
         let dataFormatada = args.data;
         if (args.data && args.data.includes('/')) {
             const [dia, mes, ano] = args.data.split('/');
@@ -511,7 +569,6 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
             console.log(`   Data convertida: ${args.data} -> ${dataFormatada}`);
         }
 
-        // Tentar agendar
         console.log(`   Chamando tentarAgendar...`);
         const resultadoAgendamento = await tentarAgendar(
             {
@@ -528,11 +585,8 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
         if (resultadoAgendamento.status === 'sucesso') {
             console.log(`   Agendamento criado com sucesso!`);
             
-            // Formatar data pra mostrar DD/MM/YYYY
             const [ano, mes, dia] = resultadoAgendamento.data.split('-');
             const dataFormatadaMostra = `${dia}/${mes}/${ano}`;
-            
-            // Usar nome do cliente (novo ou conhecido)
             const nomeClienteFinal = args.nomeCliente || dados.clienteNome || 'Cliente';
             
             return {
@@ -555,10 +609,6 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
     }
 };
 
-// ============================================
-// 4. CANCELAR AGENDAMENTO
-// ============================================
-
 const processarCancelarAgendamento = async (args: any, dados: any) => {
     try {
         console.log(`   Cancelando agendamento: ${args.agendamentoId}`);
@@ -574,10 +624,6 @@ const processarCancelarAgendamento = async (args: any, dados: any) => {
         };
     }
 };
-
-// ============================================
-// 5. REMARCAR AGENDAMENTO
-// ============================================
 
 const processarRemarcarAgendamento = async (args: any, dados: any) => {
     try {
@@ -595,10 +641,6 @@ const processarRemarcarAgendamento = async (args: any, dados: any) => {
     }
 };
 
-// ============================================
-// 6. ADICIONAR OBSERVACAO
-// ============================================
-
 const processarAdicionarObservacao = async (args: any, dados: any) => {
     try {
         console.log(`   Adicionando observacao: ${args.observacao.substring(0, 30)}...`);
@@ -615,10 +657,6 @@ const processarAdicionarObservacao = async (args: any, dados: any) => {
     }
 };
 
-// ============================================
-// 7. FUNCOES AUXILIARES (DEBUG)
-// ============================================
-
 export const limparMemoriaChat = (companyId: string, jid: string) => {
     const memKey = `${companyId}_${jid}`;
     if (chatsMemoria[memKey]) {
@@ -633,3 +671,30 @@ export const getStatusMemoria = () => {
         chats: Object.keys(chatsMemoria)
     };
 };
+
+// ✅ 8. LIMPEZA AUTOMÁTICA DE MEMÓRIA
+console.log('🧹 [AI] Iniciando sistema de limpeza automática de memória...');
+
+setInterval(() => {
+    try {
+        let totalChats = Object.keys(chatsMemoria).length;
+        let chatsLimpos = 0;
+
+        for (const key in chatsMemoria) {
+            if (chatsMemoria[key].length > 20) {
+                chatsMemoria[key] = chatsMemoria[key].slice(-10);
+                chatsLimpos++;
+            }
+        }
+
+        if (chatsLimpos > 0) {
+            console.log(`🧹 [AI] Memória limpa!`);
+            console.log(`   Total de chats ativos: ${totalChats}`);
+            console.log(`   Chats otimizados: ${chatsLimpos}`);
+        }
+    } catch (error) {
+        console.error('❌ [AI] Erro ao limpar memória:', error);
+    }
+}, 600000); // 10 minutos
+
+console.log('✅ [AI] Sistema de limpeza configurado (executa a cada 10min)');
