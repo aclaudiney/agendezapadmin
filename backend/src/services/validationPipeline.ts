@@ -2,6 +2,8 @@
  * VALIDATION PIPELINE - AGENDEZAP
  * Valida ANTES da IA responder para garantir melhor UX
  * Busca horários disponíveis e sugere alternativas automaticamente
+ * 
+ * ✅ CORRIGIDO: Valida horário no passado ANTES de pedir confirmação
  */
 
 import { ConversationContext } from '../types/conversation.js';
@@ -152,6 +154,7 @@ const validarMultiplosProfissionais = async (
 
 // ============================================
 // 5️⃣ FUNÇÃO PRINCIPAL: VALIDAR E ENRIQUECER
+// ✅ CORRIGIDO: Valida horário passado ANTES de tudo
 // ============================================
 
 export const validarEEnriquecerContexto = async (
@@ -174,6 +177,61 @@ export const validarEEnriquecerContexto = async (
       }
     };
 
+    // ✅ VALIDAÇÃO CRÍTICA 0: HORÁRIO NO PASSADO (ANTES DE TUDO!)
+    if (dadosExtraidos.data && dadosExtraidos.hora) {
+      console.log(`   ⏰ Verificando se horário já passou...`);
+      
+      const horarioValidoTempo = validarHorarioPassado(
+        dadosExtraidos.data,
+        dadosExtraidos.hora,
+        contexto.dataAtual,
+        contexto.horarioAtual
+      );
+
+      if (!horarioValidoTempo.valido) {
+        console.log(`   ❌ Horário no passado detectado!`);
+        resultado.validacoes.horarioPassado = true;
+        resultado.validacoes.horarioValido = false;
+        resultado.validacoes.motivoErro = horarioValidoTempo.motivo;
+        
+        // Buscar horários disponíveis FUTUROS
+        if (dadosExtraidos.profissional) {
+          const profissionalObj = contexto.profissionais.find(
+            p => p.nome.toLowerCase() === dadosExtraidos.profissional.toLowerCase()
+          );
+          
+          if (profissionalObj) {
+            const servicoObj = contexto.servicos.find(
+              s => s.nome.toLowerCase() === (dadosExtraidos.servico || '').toLowerCase()
+            );
+            const duracaoServico = servicoObj?.duracao || 30;
+            
+            const todosHorarios = await buscarHorariosDisponiveis(
+              contexto.companyId,
+              profissionalObj.id,
+              dadosExtraidos.data,
+              duracaoServico
+            );
+            
+            // Filtrar apenas horários FUTUROS (após hora atual + 1h)
+            const horaAtualMinutos = parseInt(contexto.horarioAtual.split(':')[0]) * 60 + 
+                                    parseInt(contexto.horarioAtual.split(':')[1]);
+            const minutoMinimoFuturo = horaAtualMinutos + 60; // 1 hora de antecedência
+            
+            const horariosFuturos = todosHorarios.filter(h => {
+              const [hora, min] = h.split(':').map(Number);
+              const minutos = hora * 60 + min;
+              return minutos > minutoMinimoFuturo;
+            });
+            
+            resultado.validacoes.sugestoesHorarios = horariosFuturos.slice(0, 4);
+          }
+        }
+        
+        return resultado;
+      }
+    }
+
     // CASO 1: DATA + HORA + PROFISSIONAL
     if (dadosExtraidos.hora && dadosExtraidos.data && dadosExtraidos.profissional) {
       console.log(`   📅 Validando: ${dadosExtraidos.data} às ${dadosExtraidos.hora} com ${dadosExtraidos.profissional}`);
@@ -183,13 +241,6 @@ export const validarEEnriquecerContexto = async (
         resultado.validacoes.diaAberto = false;
         resultado.validacoes.dentroFuncionamento = false;
         resultado.validacoes.motivoErro = diaValido.motivo;
-        return resultado;
-      }
-
-      const horarioValido = validarHorarioPassado(dadosExtraidos.data, dadosExtraidos.hora, contexto.dataAtual, contexto.horarioAtual);
-      if (!horarioValido.valido) {
-        resultado.validacoes.horarioPassado = true;
-        resultado.validacoes.motivoErro = horarioValido.motivo;
         return resultado;
       }
 
@@ -229,13 +280,6 @@ export const validarEEnriquecerContexto = async (
         resultado.validacoes.diaAberto = false;
         resultado.validacoes.dentroFuncionamento = false;
         resultado.validacoes.motivoErro = diaValido.motivo;
-        return resultado;
-      }
-
-      const horarioValido = validarHorarioPassado(dadosExtraidos.data, dadosExtraidos.hora, contexto.dataAtual, contexto.horarioAtual);
-      if (!horarioValido.valido) {
-        resultado.validacoes.horarioPassado = true;
-        resultado.validacoes.motivoErro = horarioValido.motivo;
         return resultado;
       }
 

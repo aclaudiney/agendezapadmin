@@ -1,12 +1,15 @@
 /**
  * WHATSAPP SERVICE - AGENDEZAP
  * Gerencia conexoes WhatsApp, recebe mensagens e integra com IA
+ * 
+ * ✅ CORRIGIDO: Suporte a mensagens de áudio (Groq Whisper)
  */
 
 import makeWASocket, { 
     DisconnectReason, 
     useMultiFileAuthState, 
-    WASocket
+    WASocket,
+    downloadMediaMessage
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import path from 'path';
@@ -23,6 +26,7 @@ import {
     validarDadosExtraidos
 } from './handlers/messageHandler.js';
 import { gerarRespostaIA } from './aiService.js';
+import { converterAudioParaTexto } from './audioService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -161,7 +165,7 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             console.log(`${'='.repeat(80)}`);
             
             // SELECIONAR MELHOR JID
-            let jid = msg.key.remoteJidAlt || msg.key.remoteJid || msg.key.participant;
+            let jid = msg.key.remoteJid || msg.key.participant;
             
             if (!jid) {
                 console.log(`   ❌ NENHUM JID ENCONTRADO!`);
@@ -170,9 +174,117 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             
             console.log(`   JID: ${jid}`);
 
-            const textoRecebido = msg.message.conversation 
-                || msg.message.extendedTextMessage?.text 
-                || "";
+            // ============================================
+            // ✅ EXTRAIR TEXTO DA MENSAGEM (COM SUPORTE A ÁUDIO!)
+            // ============================================
+            let textoRecebido = '';
+
+            // TEXTO SIMPLES
+            if (msg.message.conversation) {
+                textoRecebido = msg.message.conversation;
+            }
+            // TEXTO ESTENDIDO
+            else if (msg.message.extendedTextMessage?.text) {
+                textoRecebido = msg.message.extendedTextMessage.text;
+            }
+            // ✅ ÁUDIO (NOVO!)
+            else if (msg.message.audioMessage) {
+                console.log(`   🎙️ Mensagem de áudio detectada`);
+                
+                try {
+                    // Download do áudio
+                    const buffer = await downloadMediaMessage(
+                        msg,
+                        'buffer',
+                        {},
+                        {
+                            logger: console,
+                            reuploadRequest: sock.updateMediaMessage
+                        }
+                    );
+
+                    // Criar pasta temp se não existir
+                    const tempDir = path.join(__dirname, '..', 'temp');
+                    if (!fs.existsSync(tempDir)) {
+                        fs.mkdirSync(tempDir, { recursive: true });
+                    }
+
+                    // Salvar temporariamente
+                    const audioPath = path.join(tempDir, `audio_${Date.now()}.ogg`);
+                    fs.writeFileSync(audioPath, buffer);
+                    console.log(`   📁 Áudio salvo em: ${audioPath}`);
+
+                    // Converter para texto usando Groq
+                    const resultado = await converterAudioParaTexto(audioPath);
+
+                    if (resultado.sucesso && resultado.texto) {
+                        textoRecebido = resultado.texto;
+                        console.log(`   ✅ Áudio convertido: "${textoRecebido}"`);
+                    } else {
+                        console.error(`   ❌ Erro ao converter áudio: ${resultado.erro}`);
+                        await sock.sendMessage(jid, { 
+                            text: 'Desculpa, não consegui entender o áudio. Pode digitar a mensagem?' 
+                        });
+                        return;
+                    }
+                } catch (audioError) {
+                    console.error(`   ❌ Erro ao processar áudio:`, audioError);
+                    await sock.sendMessage(jid, { 
+                        text: 'Ops, tive um problema com o áudio. Pode tentar de novo ou digitar?' 
+                    });
+                    return;
+                }
+            }
+            // MENSAGEM DE VOZ (PTT)
+            else if (msg.message.audioMessage?.ptt) {
+                console.log(`   🎙️ Mensagem de voz (PTT) detectada`);
+                
+                try {
+                    const buffer = await downloadMediaMessage(
+                        msg,
+                        'buffer',
+                        {},
+                        {
+                            logger: console,
+                            reuploadRequest: sock.updateMediaMessage
+                        }
+                    );
+
+                    const tempDir = path.join(__dirname, '..', 'temp');
+                    if (!fs.existsSync(tempDir)) {
+                        fs.mkdirSync(tempDir, { recursive: true });
+                    }
+
+                    const audioPath = path.join(tempDir, `voice_${Date.now()}.ogg`);
+                    fs.writeFileSync(audioPath, buffer);
+                    console.log(`   📁 Voz salva em: ${audioPath}`);
+
+                    const resultado = await converterAudioParaTexto(audioPath);
+
+                    if (resultado.sucesso && resultado.texto) {
+                        textoRecebido = resultado.texto;
+                        console.log(`   ✅ Voz convertida: "${textoRecebido}"`);
+                    } else {
+                        console.error(`   ❌ Erro ao converter voz: ${resultado.erro}`);
+                        await sock.sendMessage(jid, { 
+                            text: 'Desculpa, não consegui entender a mensagem de voz. Pode tentar de novo?' 
+                        });
+                        return;
+                    }
+                } catch (audioError) {
+                    console.error(`   ❌ Erro ao processar voz:`, audioError);
+                    await sock.sendMessage(jid, { 
+                        text: 'Ops, tive um problema com a mensagem de voz. Pode tentar de novo?' 
+                    });
+                    return;
+                }
+            }
+
+            // Se não tem texto e não é áudio
+            if (!textoRecebido) {
+                console.log(`   ⚠️ Tipo de mensagem não suportado`);
+                return;
+            }
 
             console.log(`   Texto: ${textoRecebido}`);
             console.log(`${'='.repeat(80)}\n`);
@@ -254,8 +366,8 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             console.error(`\n❌ Erro na mensagem [${companyName}]:`, error);
             
             try {
-                const jidFallback = msg.key.remoteJidAlt 
-                    || msg.key.remoteJid 
+                const jidFallback = msg.key.remoteJid 
+                    || msg.key.participant 
                     || '';
                 
                 if (jidFallback) {
