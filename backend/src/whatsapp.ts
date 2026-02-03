@@ -164,15 +164,34 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             console.log(`[MSG RECEBIDA] De: ${companyName}`);
             console.log(`${'='.repeat(80)}`);
             
-            // SELECIONAR MELHOR JID
+            // ✅ LOGS DETALHADOS DO JID (CORRIGIDO!)
+            console.log(`\n📱 ANÁLISE COMPLETA DE JID:`);
+            console.log(`   remoteJid: ${msg.key.remoteJid || 'null'}`);
+            console.log(`   participant: ${msg.key.participant || 'null'}`);
+            console.log(`   fromMe: ${msg.key.fromMe}`);
+            
+            // ✅ PRIORIZAR remoteJid (número real do WhatsApp)
             let jid = msg.key.remoteJid || msg.key.participant;
             
             if (!jid) {
-                console.log(`   ❌ NENHUM JID ENCONTRADO!`);
+                console.log(`   ❌ NENHUM JID VÁLIDO ENCONTRADO!`);
                 return;
             }
             
-            console.log(`   JID: ${jid}`);
+            console.log(`\n✅ JID SELECIONADO: ${jid}`);
+            
+            // ✅ EXTRAIR NÚMERO LIMPO
+            let numeroLimpo = jid.split('@')[0];
+            console.log(`   Número base extraído: ${numeroLimpo}`);
+            
+            // Se é grupo, pegar participant
+            if (jid.includes('@g.us') && msg.key.participant) {
+                numeroLimpo = msg.key.participant.split('@')[0];
+                console.log(`   📱 GRUPO DETECTADO - Usando participant: ${numeroLimpo}`);
+            }
+            
+            console.log(`   📞 NÚMERO FINAL QUE SERÁ SALVO: ${numeroLimpo}`);
+            console.log(`${'='.repeat(80)}\n`);
 
             // ============================================
             // ✅ EXTRAIR TEXTO DA MENSAGEM (COM SUPORTE A ÁUDIO!)

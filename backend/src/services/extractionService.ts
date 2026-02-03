@@ -1,381 +1,402 @@
 /**
  * EXTRACTION SERVICE - AGENDEZAP
- * Extrai dados (serviço, data, hora, profissional, nome) da mensagem do cliente
- * Usa abordagem HÍBRIDA: extração rápida + IA para casos complexos
+ * Extrai dados das mensagens do cliente (serviço, data, hora, etc)
+ * 
+ * ✅ CORRIGIDO: Mantém contexto da conversa (não esquece dados anteriores)
  */
 
+import { ConversationContext } from '../types/conversation.js';
+
+// ✅ MEMÓRIA DE DADOS EXTRAÍDOS POR USUÁRIO
+const dadosConversaMemoria: Record<string, any> = {};
+
 // ============================================
-// 1️⃣ EXTRAIR SERVIÇO (HÍBRIDO)
+// SINÔNIMOS DE SERVIÇOS
 // ============================================
 
-export const extrairServico = (
+const SINONIMOS_SERVICOS: Record<string, string[]> = {
+  'cabelo': ['cabelo', 'cortar', 'corta', 'corte', 'cortado', 'aparar', 'apara'],
+  'barba': ['barba', 'barbear', 'barbeiro', 'aparar barba', 'fazer barba'],
+  'pele': ['pele', 'limpeza de pele', 'tratamento', 'facial', 'skincare'],
+  'combo': ['combo', 'tudo', 'completo', 'pacote', 'cabelo e barba']
+};
+
+// ============================================
+// EXTRAIR SERVIÇO
+// ============================================
+
+const extrairServico = async (
   mensagem: string,
-  servicosDisponiveis: string[]
-): string | null => {
-  try {
-    const mensagemLower = mensagem.toLowerCase();
-    
-    console.log(`   🔍 Procurando serviço...`);
-    console.log(`      Disponíveis: ${servicosDisponiveis.join(', ')}`);
-
-    // 1️⃣ TENTAR MATCH EXATO PRIMEIRO (rápido)
-    for (const servico of servicosDisponiveis) {
-      const servicoLower = servico.toLowerCase();
-      
-      if (mensagemLower.includes(servicoLower)) {
-        console.log(`   ✅ Serviço encontrado (exato): ${servico}`);
-        return servico;
-      }
-    }
-
-    // 2️⃣ SINÔNIMOS PRINCIPAIS (mantém pequeno e eficiente)
-    const sinonimosChave = {
-      // Tudo relacionado a CABELO
-      "cabelo": ["corte", "cortar", "corta", "cabelo", "aparar", "tosa", "raspar", "dar um trato", "tratar cabelo"],
-      
-      // Tudo relacionado a BARBA
-      "barba": ["barba", "fazer barba", "barbear", "aparar barba", "desenhar barba", "modelar", "raspar barba", "trato na barba"],
-      
-      // Tudo relacionado a PELE/ROSTO
-      "pele": ["pele", "limpeza", "hidratação", "facial", "rosto", "tratamento de pele", "esfoliação", "massagem facial"],
-      
-      // Tudo relacionado a COMBO
-      "combo": ["combo", "completo", "pacote", "os dois", "cabelo e barba", "tudo", "kit", "promoção"]
-    };
-
-    console.log(`   🔎 Procurando sinônimos...`);
-
-    for (const [chaveCategoria, listaSinonimos] of Object.entries(sinonimosChave)) {
-      for (const sinonimo of listaSinonimos) {
-        if (mensagemLower.includes(sinonimo)) {
-          console.log(`   ✅ Sinônimo encontrado: "${sinonimo}" (categoria: ${chaveCategoria})`);
-          
-          // Encontrou sinônimo, agora procura serviço que bate com essa categoria
-          const servicoEncontrado = servicosDisponiveis.find(s => {
-            const servicoBaixo = s.toLowerCase();
-            // Procura por palavra-chave da categoria dentro do nome do serviço
-            return servicoBaixo.includes(chaveCategoria);
-          });
-
-          if (servicoEncontrado) {
-            console.log(`   ✅ Serviço extraído (sinônimo): ${servicoEncontrado}`);
-            return servicoEncontrado;
-          }
+  contexto: ConversationContext
+): Promise<string | null> => {
+  const msgLower = mensagem.toLowerCase();
+  
+  console.log(`   🔎 Procurando sinônimos...`);
+  
+  // Tentar encontrar por sinônimos
+  for (const [categoria, sinonimos] of Object.entries(SINONIMOS_SERVICOS)) {
+    for (const sinonimo of sinonimos) {
+      if (msgLower.includes(sinonimo)) {
+        console.log(`   ✅ Sinônimo encontrado: "${sinonimo}" (categoria: ${categoria})`);
+        
+        // Buscar serviço correspondente no banco
+        const servicoEncontrado = contexto.servicos.find(s => 
+          s.nome.toLowerCase().includes(categoria)
+        );
+        
+        if (servicoEncontrado) {
+          return servicoEncontrado.nome;
         }
       }
     }
-
-    // 3️⃣ NÃO ENCONTROU - deixa pra IA resolver
-    console.log(`   ⚠️ Serviço não encontrado na extração`);
-    console.log(`      → IA vai tentar entender ou perguntar`);
-    return null;
-
-  } catch (error) {
-    console.error('❌ Erro extrairServico:', error);
-    return null;
   }
+  
+  // Tentar match direto com serviços cadastrados
+  for (const servico of contexto.servicos) {
+    if (msgLower.includes(servico.nome.toLowerCase())) {
+      return servico.nome;
+    }
+  }
+  
+  return null;
 };
 
 // ============================================
-// 2️⃣ EXTRAIR DATA
+// EXTRAIR DATA
 // ============================================
 
-export const extrairData = (
+const extrairData = (
   mensagem: string,
-  dataAtual: string // YYYY-MM-DD
+  contexto: ConversationContext
 ): string | null => {
-  try {
-    const mensagemLower = mensagem.toLowerCase();
-    const hoje = new Date(dataAtual);
+  const msgLower = mensagem.toLowerCase();
+  const hoje = new Date(contexto.dataAtual);
+  
+  // Hoje
+  if (msgLower.match(/\bhoje\b/)) {
+    const ano = hoje.getFullYear();
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    return `${ano}-${mes}-${dia}`;
+  }
+  
+  // Amanhã
+  if (msgLower.match(/\bamanhã\b|amanha/)) {
     const amanha = new Date(hoje);
     amanha.setDate(amanha.getDate() + 1);
-
-    // Formatar datas
-    const formatarData = (date: Date) => date.toISOString().split('T')[0];
-    const hojeFormatado = formatarData(hoje);
-    const amanhaFormatado = formatarData(amanha);
-
-    // Nomes dos dias
-    const diasSemana = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
-
-    // ✅ HOJE / AGORA
-    if (
-      mensagemLower.includes('hoje') ||
-      mensagemLower.includes('agora') ||
-      mensagemLower.includes('neste dia') ||
-      mensagemLower.includes('esse dia')
-    ) {
-      console.log(`   ✅ Data extraída: hoje (${hojeFormatado})`);
-      return hojeFormatado;
-    }
-
-    // ✅ AMANHÃ
-    if (
-      mensagemLower.includes('amanhã') ||
-      mensagemLower.includes('amanha') ||
-      mensagemLower.includes('próximo dia') ||
-      mensagemLower.includes('proximo dia') ||
-      mensagemLower.includes('dia que vem')
-    ) {
-      console.log(`   ✅ Data extraída: amanhã (${amanhaFormatado})`);
-      return amanhaFormatado;
-    }
-
-    // ✅ DIAS DA SEMANA (segunda, terça, etc)
-    for (let i = 0; i < diasSemana.length; i++) {
-      if (mensagemLower.includes(diasSemana[i])) {
-        // Encontrar próxima ocorrência desse dia
-        let dataProxima = new Date(hoje);
-        const diaAtual = hoje.getDay();
-        let diasAdicionar = (i - diaAtual + 7) % 7;
-        
-        // Se é hoje, busca próxima semana
-        if (diasAdicionar === 0) diasAdicionar = 7;
-        
-        dataProxima.setDate(dataProxima.getDate() + diasAdicionar);
-        const dataFormatada = formatarData(dataProxima);
-        console.log(`   ✅ Data extraída: ${diasSemana[i]} (${dataFormatada})`);
-        return dataFormatada;
-      }
-    }
-
-    // ✅ FORMATO DD/MM/YYYY ou DD-MM-YYYY
-    const regexData = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/;
-    const matchData = mensagem.match(regexData);
-    if (matchData) {
-      const dia = matchData[1].padStart(2, '0');
-      const mes = matchData[2].padStart(2, '0');
-      const ano = matchData[3];
-      const dataFormatada = `${ano}-${mes}-${dia}`;
-      console.log(`   ✅ Data extraída: ${dataFormatada}`);
-      return dataFormatada;
-    }
-
-    console.log(`   ❌ Nenhuma data encontrada`);
-    return null;
-  } catch (error) {
-    console.error('❌ Erro extrairData:', error);
-    return null;
+    const ano = amanha.getFullYear();
+    const mes = String(amanha.getMonth() + 1).padStart(2, '0');
+    const dia = String(amanha.getDate()).padStart(2, '0');
+    console.log(`   ✅ Data extraída: amanhã (${ano}-${mes}-${dia})`);
+    return `${ano}-${mes}-${dia}`;
   }
-};
-
-// ============================================
-// 3️⃣ EXTRAIR HORÁRIO
-// ============================================
-
-export const extrairHorario = (mensagem: string): string | null => {
-  try {
-    const mensagemLower = mensagem.toLowerCase();
-
-    // ✅ FORMATO: "às 15" ou "às 15h" ou "15 horas"
-    const regexAshora = /às\s+(\d{1,2})\s*(h|horas|hrs)?/i;
-    const match1 = mensagemLower.match(regexAshora);
-    if (match1) {
-      const hora = match1[1].padStart(2, '0');
-      const horario = `${hora}:00`;
-      console.log(`   ✅ Horário extraído (padrão "às X"): ${horario}`);
-      return horario;
-    }
-
-    // ✅ FORMATO: "15h" ou "15 horas" ou "15hrs"
-    const regexHora = /(\d{1,2})\s*(h|horas|hrs)/i;
-    const match2 = mensagemLower.match(regexHora);
-    if (match2) {
-      const hora = match2[1].padStart(2, '0');
-      const horario = `${hora}:00`;
-      console.log(`   ✅ Horário extraído (padrão "X horas"): ${horario}`);
-      return horario;
-    }
-
-    // ✅ FORMATO: "15:30" ou "1530"
-    const regexHoraMinuto = /(\d{1,2}):?(\d{2})/;
-    const match3 = mensagemLower.match(regexHoraMinuto);
-    if (match3) {
-      const hora = match3[1].padStart(2, '0');
-      const minuto = match3[2] ? match3[2].padStart(2, '0') : '00';
-      const horario = `${hora}:${minuto}`;
-      console.log(`   ✅ Horário extraído (padrão "HH:MM"): ${horario}`);
-      return horario;
-    }
-
-    console.log(`   ❌ Nenhum horário encontrado`);
-    return null;
-  } catch (error) {
-    console.error('❌ Erro extrairHorario:', error);
-    return null;
-  }
-};
-
-// ============================================
-// 4️⃣ EXTRAIR PROFISSIONAL
-// ============================================
-
-export const extrairProfissional = (
-  mensagem: string,
-  profissionaisDisponiveis: string[]
-): string | null => {
-  try {
-    const mensagemLower = mensagem.toLowerCase();
-
-    console.log(`   🔍 Procurando profissional...`);
-
-    // 1️⃣ MATCH EXATO
-    for (const prof of profissionaisDisponiveis) {
-      const profLower = prof.toLowerCase();
+  
+  // Dia específico (ex: dia 15, dia 20)
+  const matchDia = msgLower.match(/\bdia\s+(\d{1,2})\b/);
+  if (matchDia) {
+    const dia = parseInt(matchDia[1]);
+    if (dia >= 1 && dia <= 31) {
+      let mes = hoje.getMonth() + 1;
+      let ano = hoje.getFullYear();
       
-      if (mensagemLower.includes(profLower)) {
-        console.log(`   ✅ Profissional encontrado: ${prof}`);
-        return prof;
+      // Se o dia já passou este mês, assumir mês que vem
+      if (dia < hoje.getDate()) {
+        mes++;
+        if (mes > 12) {
+          mes = 1;
+          ano++;
+        }
+      }
+      
+      const diaStr = String(dia).padStart(2, '0');
+      const mesStr = String(mes).padStart(2, '0');
+      return `${ano}-${mesStr}-${diaStr}`;
+    }
+  }
+  
+  // Data no formato DD/MM ou DD/MM/YYYY
+  const matchData = msgLower.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+  if (matchData) {
+    const dia = parseInt(matchData[1]);
+    const mes = parseInt(matchData[2]);
+    let ano = matchData[3] ? parseInt(matchData[3]) : hoje.getFullYear();
+    
+    if (ano < 100) ano += 2000;
+    
+    if (dia >= 1 && dia <= 31 && mes >= 1 && mes <= 12) {
+      const diaStr = String(dia).padStart(2, '0');
+      const mesStr = String(mes).padStart(2, '0');
+      return `${ano}-${mesStr}-${diaStr}`;
+    }
+  }
+  
+  return null;
+};
+
+// ============================================
+// EXTRAIR HORA
+// ============================================
+
+const extrairHora = (mensagem: string): string | null => {
+  const msgLower = mensagem.toLowerCase();
+  
+  // Formato HH:MM ou HH
+  const match = msgLower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(?:h|hs|horas?|hrs?)?\b/);
+  if (match) {
+    const hora = parseInt(match[1]);
+    const minuto = match[2] ? parseInt(match[2]) : 0;
+    
+    if (hora >= 0 && hora <= 23 && minuto >= 0 && minuto <= 59) {
+      const horaStr = String(hora).padStart(2, '0');
+      const minStr = String(minuto).padStart(2, '0');
+      console.log(`   ✅ Horário extraído: ${horaStr}:${minStr}`);
+      return `${horaStr}:${minStr}`;
+    }
+  }
+  
+  return null;
+};
+
+// ============================================
+// EXTRAIR PROFISSIONAL
+// ============================================
+
+const extrairProfissional = (
+  mensagem: string,
+  contexto: ConversationContext
+): string | null => {
+  const msgLower = mensagem.toLowerCase();
+  
+  for (const prof of contexto.profissionais) {
+    const nomeLower = prof.nome.toLowerCase();
+    
+    // Match exato ou parcial
+    if (msgLower.includes(nomeLower)) {
+      return prof.nome;
+    }
+    
+    // Variações (ex: "com João" → "João")
+    const patterns = [
+      new RegExp(`\\bcom\\s+${nomeLower}\\b`),
+      new RegExp(`\\b${nomeLower}\\b`)
+    ];
+    
+    for (const pattern of patterns) {
+      if (pattern.test(msgLower)) {
+        return prof.nome;
       }
     }
-
-    // 2️⃣ NÃO ENCONTROU - deixa pra IA
-    console.log(`   ⚠️ Profissional não encontrado na extração`);
-    return null;
-
-  } catch (error) {
-    console.error('❌ Erro extrairProfissional:', error);
-    return null;
   }
+  
+  return null;
 };
 
 // ============================================
-// 5️⃣ EXTRAIR NOME (para cliente novo)
+// EXTRAIR NOME
 // ============================================
 
-export const extrairNome = (mensagem: string): string | null => {
-  try {
-    // Procura por padrões explícitos
-    const regexNome1 = /meu nome é\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i;
-    const regexNome2 = /sou (?:o|a)\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i;
-    const regexNome3 = /me chamo\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i;
-    const regexNome4 = /(?:pode me chamar de|chamar de)\s+([a-záàâãéèêíïóôõöúçñ\s]+)/i;
-
-    const match1 = mensagem.match(regexNome1);
-    if (match1) {
-      const nome = match1[1].trim().split(/\s+/).slice(0, 2).join(' ');
-      console.log(`   ✅ Nome extraído: ${nome}`);
-      return nome;
+const extrairNome = (mensagem: string): string | null => {
+  // Padrões que indicam nome completo
+  const patterns = [
+    /(?:me chamo|sou|meu nome é|nome:?)\s+([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)+)/i,
+    /^([A-ZÀ-Ÿ][a-zà-ÿ]+\s+[A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)*)$/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = mensagem.match(pattern);
+    if (match && match[1]) {
+      const nome = match[1].trim();
+      // Verificar se tem pelo menos nome e sobrenome
+      if (nome.split(' ').length >= 2) {
+        return nome;
+      }
     }
-
-    const match2 = mensagem.match(regexNome2);
-    if (match2) {
-      const nome = match2[1].trim().split(/\s+/).slice(0, 2).join(' ');
-      console.log(`   ✅ Nome extraído: ${nome}`);
-      return nome;
-    }
-
-    const match3 = mensagem.match(regexNome3);
-    if (match3) {
-      const nome = match3[1].trim().split(/\s+/).slice(0, 2).join(' ');
-      console.log(`   ✅ Nome extraído: ${nome}`);
-      return nome;
-    }
-
-    const match4 = mensagem.match(regexNome4);
-    if (match4) {
-      const nome = match4[1].trim().split(/\s+/).slice(0, 2).join(' ');
-      console.log(`   ✅ Nome extraído: ${nome}`);
-      return nome;
-    }
-
-    console.log(`   ❌ Nenhum nome encontrado`);
-    return null;
-  } catch (error) {
-    console.error('❌ Erro extrairNome:', error);
-    return null;
   }
+  
+  return null;
 };
 
 // ============================================
-// 6️⃣ EXTRAIR PERÍODO (manhã, tarde, noite)
+// EXTRAIR PERÍODO
 // ============================================
 
-export const extrairPeriodo = (mensagem: string): string | null => {
-  try {
-    const mensagemLower = mensagem.toLowerCase();
-
-    if (
-      mensagemLower.includes('manhã') ||
-      mensagemLower.includes('manha') ||
-      mensagemLower.includes('de manhã') ||
-      mensagemLower.includes('cedo') ||
-      mensagemLower.includes('início do dia')
-    ) {
-      console.log(`   ✅ Período extraído: manhã`);
-      return 'manhã';
-    }
-
-    if (
-      mensagemLower.includes('tarde') ||
-      mensagemLower.includes('de tarde') ||
-      mensagemLower.includes('à tarde') ||
-      mensagemLower.includes('depois do meio-dia')
-    ) {
-      console.log(`   ✅ Período extraído: tarde`);
-      return 'tarde';
-    }
-
-    if (
-      mensagemLower.includes('noite') ||
-      mensagemLower.includes('de noite') ||
-      mensagemLower.includes('à noite') ||
-      mensagemLower.includes('mais tarde') ||
-      mensagemLower.includes('fim do dia')
-    ) {
-      console.log(`   ✅ Período extraído: noite`);
-      return 'noite';
-    }
-
-    console.log(`   ❌ Nenhum período encontrado`);
-    return null;
-  } catch (error) {
-    console.error('❌ Erro extrairPeriodo:', error);
-    return null;
+const extrairPeriodo = (mensagem: string): string | null => {
+  const msgLower = mensagem.toLowerCase();
+  
+  if (msgLower.match(/\bmanhã\b|matinal|matutino|de manhã/)) {
+    return 'manhã';
   }
+  
+  if (msgLower.match(/\btarde\b|vespertino|de tarde/)) {
+    return 'tarde';
+  }
+  
+  if (msgLower.match(/\bnoite\b|noturno|de noite/)) {
+    return 'noite';
+  }
+  
+  return null;
 };
 
 // ============================================
-// 7️⃣ FUNÇÃO PRINCIPAL: EXTRAIR TUDO
+// ✅ FUNÇÃO PRINCIPAL: EXTRAIR DADOS (COM MEMÓRIA!)
 // ============================================
 
-export const extrairDados = async (
+export const extrairDadosMensagem = async (
   mensagem: string,
-  servicosDisponiveis: string[],
-  profissionaisDisponiveis: string[],
-  dataAtual: string
-) => {
+  contexto: ConversationContext
+): Promise<any> => {
   try {
     console.log(`\n📊 [EXTRACTION] Extraindo dados da mensagem...`);
-    console.log(`   Mensagem: "${mensagem}"\n`);
+    console.log(`   Mensagem: "${mensagem}"`);
 
-    const dados = {
-      servico: extrairServico(mensagem, servicosDisponiveis),
-      data: extrairData(mensagem, dataAtual),
-      hora: extrairHorario(mensagem),
-      profissional: extrairProfissional(mensagem, profissionaisDisponiveis),
-      nome: extrairNome(mensagem),
-      periodo: extrairPeriodo(mensagem)
+    // ✅ CHAVE ÚNICA POR USUÁRIO
+    const memKey = `${contexto.companyId}_${contexto.telefone}`;
+
+    // ✅ RECUPERAR DADOS ANTERIORES (se existir)
+    let dadosAcumulados = dadosConversaMemoria[memKey] || {
+      servico: null,
+      data: null,
+      hora: null,
+      periodo: null,
+      profissional: null,
+      nome: null
     };
 
-    console.log(`\n📊 [EXTRACTION] Dados extraídos:`);
-    console.log(`   Serviço: ${dados.servico || 'IA vai resolver'}`);
-    console.log(`   Data: ${dados.data || 'IA vai perguntar'}`);
-    console.log(`   Horário: ${dados.hora || 'IA vai perguntar'}`);
-    console.log(`   Período: ${dados.periodo || 'não informado'}`);
-    console.log(`   Profissional: ${dados.profissional || 'IA vai resolver'}`);
-    console.log(`   Nome: ${dados.nome || 'IA vai perguntar'}\n`);
+    // Mostrar dados anteriores (se tiver)
+    const temDadosAnteriores = Object.values(dadosAcumulados).some(v => v !== null);
+    if (temDadosAnteriores) {
+      console.log(`\n   📝 Dados anteriores da conversa:`);
+      if (dadosAcumulados.servico) console.log(`      Serviço: ${dadosAcumulados.servico}`);
+      if (dadosAcumulados.data) console.log(`      Data: ${dadosAcumulados.data}`);
+      if (dadosAcumulados.hora) console.log(`      Hora: ${dadosAcumulados.hora}`);
+      if (dadosAcumulados.profissional) console.log(`      Profissional: ${dadosAcumulados.profissional}`);
+      if (dadosAcumulados.nome) console.log(`      Nome: ${dadosAcumulados.nome}`);
+      if (dadosAcumulados.periodo) console.log(`      Período: ${dadosAcumulados.periodo}`);
+    }
 
-    return dados;
+    // EXTRAIR SERVIÇO (se ainda não tem)
+    if (!dadosAcumulados.servico) {
+      console.log(`\n   🔍 Procurando serviço...`);
+      console.log(`      Disponíveis: ${contexto.servicos.map(s => s.nome).join(', ')}`);
+      
+      const servicoEncontrado = await extrairServico(mensagem, contexto);
+      if (servicoEncontrado) {
+        dadosAcumulados.servico = servicoEncontrado;
+        console.log(`   ✅ Serviço encontrado: ${servicoEncontrado}`);
+      } else {
+        console.log(`   ⚠️ Serviço não encontrado na extração`);
+        console.log(`      → IA vai tentar entender ou perguntar`);
+      }
+    } else {
+      console.log(`   ✅ Serviço já existe (mantendo): ${dadosAcumulados.servico}`);
+    }
+
+    // EXTRAIR DATA (se ainda não tem)
+    if (!dadosAcumulados.data) {
+      const dataExtraida = extrairData(mensagem, contexto);
+      if (dataExtraida) {
+        dadosAcumulados.data = dataExtraida;
+      } else {
+        console.log(`   ❌ Nenhuma data encontrada`);
+      }
+    } else {
+      console.log(`   ✅ Data já existe (mantendo): ${dadosAcumulados.data}`);
+    }
+
+    // EXTRAIR HORA (se ainda não tem)
+    if (!dadosAcumulados.hora) {
+      const horaExtraida = extrairHora(mensagem);
+      if (horaExtraida) {
+        dadosAcumulados.hora = horaExtraida;
+      } else {
+        console.log(`   ❌ Nenhum horário encontrado`);
+      }
+    } else {
+      console.log(`   ✅ Horário já existe (mantendo): ${dadosAcumulados.hora}`);
+    }
+
+    // EXTRAIR PROFISSIONAL (se ainda não tem)
+    if (!dadosAcumulados.profissional) {
+      console.log(`   🔍 Procurando profissional...`);
+      const profissionalEncontrado = extrairProfissional(mensagem, contexto);
+      if (profissionalEncontrado) {
+        dadosAcumulados.profissional = profissionalEncontrado;
+        console.log(`   ✅ Profissional encontrado: ${profissionalEncontrado}`);
+      } else {
+        console.log(`   ⚠️ Profissional não encontrado na extração`);
+      }
+    } else {
+      console.log(`   ✅ Profissional já existe (mantendo): ${dadosAcumulados.profissional}`);
+    }
+
+    // EXTRAIR NOME (se ainda não tem)
+    if (!dadosAcumulados.nome) {
+      const nomeExtraido = extrairNome(mensagem);
+      if (nomeExtraido) {
+        dadosAcumulados.nome = nomeExtraido;
+        console.log(`   ✅ Nome extraído: ${nomeExtraido}`);
+      } else {
+        console.log(`   ❌ Nenhum nome encontrado`);
+      }
+    } else {
+      console.log(`   ✅ Nome já existe (mantendo): ${dadosAcumulados.nome}`);
+    }
+
+    // EXTRAIR PERÍODO (sempre tenta, pode mudar)
+    const periodoExtraido = extrairPeriodo(mensagem);
+    if (periodoExtraido) {
+      dadosAcumulados.periodo = periodoExtraido;
+      console.log(`   ✅ Período extraído: ${periodoExtraido}`);
+    } else if (!dadosAcumulados.periodo) {
+      console.log(`   ❌ Nenhum período encontrado`);
+    }
+
+    // ✅ SALVAR NA MEMÓRIA
+    dadosConversaMemoria[memKey] = dadosAcumulados;
+
+    console.log(`\n📊 [EXTRACTION] Dados extraídos (acumulados):`)
+    console.log(`   Serviço: ${dadosAcumulados.servico || 'IA vai resolver'}`);
+    console.log(`   Data: ${dadosAcumulados.data || 'IA vai perguntar'}`);
+    console.log(`   Horário: ${dadosAcumulados.hora || 'IA vai perguntar'}`);
+    console.log(`   Período: ${dadosAcumulados.periodo || 'não informado'}`);
+    console.log(`   Profissional: ${dadosAcumulados.profissional || 'IA vai resolver'}`);
+    console.log(`   Nome: ${dadosAcumulados.nome || 'IA vai perguntar'}`);
+
+    return dadosAcumulados;
+
   } catch (error) {
-    console.error('❌ Erro extrairDados:', error);
+    console.error('❌ Erro extrairDadosMensagem:', error);
     return {
       servico: null,
       data: null,
       hora: null,
+      periodo: null,
       profissional: null,
-      nome: null,
-      periodo: null
+      nome: null
     };
   }
+};
+
+// ============================================
+// ✅ LIMPAR MEMÓRIA (chamar após confirmar agendamento)
+// ============================================
+
+export const limparDadosConversaMemoria = (companyId: string, telefone: string) => {
+  const memKey = `${companyId}_${telefone}`;
+  if (dadosConversaMemoria[memKey]) {
+    delete dadosConversaMemoria[memKey];
+    console.log(`🗑️ [EXTRACTION] Memória de conversa limpa: ${memKey}`);
+  }
+};
+
+// ============================================
+// STATUS DA MEMÓRIA (debug)
+// ============================================
+
+export const getStatusMemoriaExtracao = () => {
+  return {
+    totalConversas: Object.keys(dadosConversaMemoria).length,
+    conversas: Object.keys(dadosConversaMemoria)
+  };
 };
