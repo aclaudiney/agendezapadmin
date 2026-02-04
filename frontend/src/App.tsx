@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, LogOut } from 'lucide-react';
+import { X } from 'lucide-react';
 
 // ✅ PÁGINAS ANTIGAS
 import Login from './pages/Login';
@@ -19,22 +19,25 @@ import ClientDashboard from './pages/ClientDashboard';
 import WhatsAppSim from './components/WhatsAppSim';
 import WhatsappConfig from './pages/WhatsappConfig';
 
-// ✅ PÁGINA ADMIN (NOVO)
+// ✅ PÁGINAS ADMIN (COM SIDEBAR!)
 import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminCRMPage from './pages/admin/AdminCRMPage';
+import AdminSidebar from './components/AdminSidebar'; // ✅ NOVO!
 
 // ============================================
-// APP PRINCIPAL - ✅ CORRIGIDO
+// APP PRINCIPAL - ✅ COM SIDEBAR ADMIN
 // ============================================
 const App: React.FC = () => {
   const [autenticado, setAutenticado] = useState(false);
   const [usuario, setUsuario] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'empresa' | null>(null);
   const [activePage, setActivePage] = useState('dashboard');
+  const [adminActivePage, setAdminActivePage] = useState('dashboard'); // ✅ NOVO!
   const [showTester, setShowTester] = useState(false);
   const [loading, setLoading] = useState(true);
   const [clienteLogado, setClienteLogado] = useState<any>(null);
 
-  // ✅ CARREGAR DADOS DO LOCALSTORAGE UMA ÚNICA VEZ - CORRIGIDO
+  // ✅ CARREGAR DADOS DO LOCALSTORAGE
   useEffect(() => {
     const verificarECarregar = async () => {
       try {
@@ -44,12 +47,10 @@ const App: React.FC = () => {
         const autenticadoSalvo = localStorage.getItem('autenticado');
         const roleStoraged = localStorage.getItem('userRole') as 'admin' | 'empresa' | null;
 
-        // ✅ SE TEM DADOS SALVOS, VALIDAR SE SÃO VÁLIDOS
         if (usuarioSalvo && autenticadoSalvo === 'true') {
           try {
             const usuario = JSON.parse(usuarioSalvo);
             
-            // Verificar se tem campos essenciais
             if (usuario && usuario.email && roleStoraged) {
               console.log('✅ [APP] Sessão válida encontrada');
               setUsuario(usuario);
@@ -109,6 +110,7 @@ const App: React.FC = () => {
     setUsuario(null);
     setUserRole(null);
     setActivePage('dashboard');
+    setAdminActivePage('dashboard');
   };
 
   const handleClientLoginSuccess = (clienteId: string, nome: string, telefone: string, email: string) => {
@@ -122,6 +124,7 @@ const App: React.FC = () => {
     window.location.href = '/login-cliente';
   };
 
+  // ✅ RENDERIZAR PÁGINA DE EMPRESA
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard': return <Dashboard />;
@@ -138,7 +141,26 @@ const App: React.FC = () => {
     }
   };
 
-  // ✅ MOSTRAR CARREGAMENTO
+  // ✅ RENDERIZAR PÁGINA DE ADMIN (NOVO!)
+  const renderAdminPage = () => {
+    switch (adminActivePage) {
+      case 'dashboard':
+      case 'empresas':
+        return <AdminDashboard />;
+      case 'crm':
+        return <AdminCRMPage />;
+      default:
+        return (
+          <div className="flex items-center justify-center h-96">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-slate-800 mb-2">Em breve!</p>
+              <p className="text-slate-600">Esta funcionalidade está em desenvolvimento</p>
+            </div>
+          </div>
+        );
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-50">
@@ -150,21 +172,19 @@ const App: React.FC = () => {
     );
   }
 
-  // ✅ OBTER PATHNAME
   const pathname = window.location.pathname;
 
   // ============================================
-  // 🔴 VERIFICAR ROTAS PÚBLICAS PRIMEIRO!
+  // ROTAS PÚBLICAS
   // ============================================
 
-  // ✅ DETECTAR ROTA PÚBLICA: /studio-takata, /agendar/studio-takata, etc
-  // ✅ EXCLUIR ROTAS ADMINISTRATIVAS: /dashboard, /admin/dashboard, /login, /login-cliente, /meu-agendamento, etc
   const isPublicBooking = pathname.startsWith('/agendar/') || 
                           (pathname !== '/' && 
                            pathname !== '/login' && 
                            pathname !== '/login-cliente' && 
                            pathname !== '/meu-agendamento' && 
                            pathname !== '/admin/dashboard' &&
+                           pathname !== '/admin/crm' &&
                            pathname !== '/dashboard' &&
                            /^\/[a-z0-9-]+$/.test(pathname));
 
@@ -174,7 +194,6 @@ const App: React.FC = () => {
     return <PublicBooking slug={slug} />;
   }
 
-  // ✅ ROTA: /login-cliente
   if (pathname === '/login-cliente') {
     if (clienteLogado) {
       window.location.href = '/meu-agendamento';
@@ -183,12 +202,10 @@ const App: React.FC = () => {
     return <ClientLogin onLoginSuccess={handleClientLoginSuccess} />;
   }
 
-  // ✅ ROTA: /meu-agendamento
   if (pathname === '/meu-agendamento') {
     const clienteSalvo = localStorage.getItem('clienteLogado');
     
     if (!clienteSalvo) {
-      // Não tem cliente no localStorage, redireciona para login
       console.warn('❌ Sem cliente no localStorage, redirecionando para login');
       window.location.href = '/login-cliente';
       return null;
@@ -206,48 +223,35 @@ const App: React.FC = () => {
   }
 
   // ============================================
-  // 🔐 DEPOIS VERIFICAR AUTENTICAÇÃO
+  // AUTENTICAÇÃO
   // ============================================
 
-  // ✅ NÃO AUTENTICADO - MOSTRAR LOGIN
   if (!autenticado) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
 
-  // ✅ ADMIN - MOSTRAR ADMIN DASHBOARD
+  // ✅ ADMIN - COM SIDEBAR!
   if (userRole === 'admin') {
-    // Se tentar acessar outra rota que não seja admin, redirecionar
-    if (pathname !== '/admin/dashboard' && pathname !== '/') {
-      window.location.href = '/admin/dashboard';
-      return null;
-    }
-
     return (
-      <div className="flex min-h-screen">
-        <div className="flex-1 p-8 bg-slate-50">
-          <div className="flex justify-between items-center mb-8 pb-6 border-b border-slate-200">
-            <div>
-              <h1 className="text-3xl font-bold text-slate-800">AgendeZap Admin</h1>
-              <p className="text-slate-500 text-sm">Painel de controle do sistema</p>
-            </div>
-            <button
-              onClick={handleAdminLogout}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
-            >
-              <LogOut size={18} />
-              <span>Sair</span>
-            </button>
-          </div>
+      <div className="flex min-h-screen bg-slate-50">
+        {/* ✅ SIDEBAR ADMIN */}
+        <AdminSidebar 
+          activePage={adminActivePage}
+          onNavigate={setAdminActivePage}
+          onLogout={handleAdminLogout}
+        />
 
-          <div className="max-w-7xl mx-auto">
-            <AdminDashboard />
+        {/* ✅ CONTEÚDO PRINCIPAL */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-8">
+            {renderAdminPage()}
           </div>
-        </div>
+        </main>
       </div>
     );
   }
 
-  // ✅ EMPRESA - MOSTRAR DASHBOARD EMPRESA
+  // ✅ EMPRESA - DASHBOARD NORMAL
   if (userRole === 'empresa') {
     return (
       <div className="flex min-h-screen">
@@ -263,13 +267,6 @@ const App: React.FC = () => {
               <h1 className="text-3xl font-bold text-slate-800">{usuario?.nome_estabelecimento || 'Estabelecimento'}</h1>
               <p className="text-slate-500 text-sm">Logado como: {usuario?.email}</p>
             </div>
-            <button
-              onClick={handleAdminLogout}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
-            >
-              <LogOut size={18} />
-              <span>Sair</span>
-            </button>
           </div>
 
           <div className="max-w-6xl mx-auto">
@@ -295,18 +292,12 @@ const App: React.FC = () => {
   }
 
   // ============================================
-  // ❌ FALLBACK - LIMPAR E REDIRECIONAR (CORRIGIDO!)
+  // FALLBACK
   // ============================================
   console.error('🚨 [APP] Estado inválido detectado - limpando cache');
-  console.log('   autenticado:', autenticado);
-  console.log('   userRole:', userRole);
-  console.log('   pathname:', pathname);
-
-  // Limpar tudo
   localStorage.clear();
   sessionStorage.clear();
 
-  // Redirecionar para login
   setTimeout(() => {
     window.location.href = '/login';
   }, 100);

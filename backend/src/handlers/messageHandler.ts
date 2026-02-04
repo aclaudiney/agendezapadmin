@@ -9,7 +9,7 @@
 import { ConversationContext, TipoConversa } from '../types/conversation.js';
 import { obterDadosClienteParaIA, formatarTelefone } from '../services/clientService.js';
 import { buscarAgendamentosCliente, buscarProximoAgendamento } from '../services/appointmentService.js';
-import { extrairDadosMensagem } from '../services/extractionService.js'; // ✅ CORRIGIDO!
+import { extrairDadosMensagem as extrairDadosDoTexto } from '../services/extractionService.js'; // ✅ RENOMEADO!
 import { validarEEnriquecerContexto } from '../services/validationPipeline.js';
 import { db } from '../supabase.js';
 
@@ -273,8 +273,8 @@ export const extrairDadosMensagem = async (
   try {
     console.log(`\n📊 Extraindo dados da mensagem...`);
     
-    // ✅ CHAMA A FUNÇÃO IMPORTADA COM O CONTEXTO COMPLETO
-    const dadosExtraidos = await extrairDadosMensagem(mensagem, contexto);
+    // ✅ CHAMA A FUNÇÃO IMPORTADA (renomeada para evitar conflito)
+    const dadosExtraidos = await extrairDadosDoTexto(mensagem, contexto);
 
     return dadosExtraidos;
   } catch (error) {

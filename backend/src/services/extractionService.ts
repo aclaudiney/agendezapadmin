@@ -3,9 +3,17 @@
  * Extrai dados das mensagens do cliente (serviço, data, hora, etc)
  * 
  * ✅ CORRIGIDO: Mantém contexto da conversa (não esquece dados anteriores)
+ * ✅ NOVO: Busca horários disponíveis no banco
+ * ✅ NOVO: Filtra horários que já passaram (hora atual)
  */
 
 import { ConversationContext } from '../types/conversation.js';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 // ✅ MEMÓRIA DE DADOS EXTRAÍDOS POR USUÁRIO
 const dadosConversaMemoria: Record<string, any> = {};
@@ -19,6 +27,186 @@ const SINONIMOS_SERVICOS: Record<string, string[]> = {
   'barba': ['barba', 'barbear', 'barbeiro', 'aparar barba', 'fazer barba'],
   'pele': ['pele', 'limpeza de pele', 'tratamento', 'facial', 'skincare'],
   'combo': ['combo', 'tudo', 'completo', 'pacote', 'cabelo e barba']
+};
+
+// ============================================
+// ✅ NOVO: BUSCAR HORÁRIOS DISPONÍVEIS
+// ============================================
+
+const buscarHorariosDisponiveis = async (
+  companyId: string,
+  profissionalNome: string,
+  data: string,
+  periodo?: string
+): Promise<string[]> => {
+  try {
+    console.log(`\n🕐 [HORÁRIOS] Buscando disponibilidade...`);
+    console.log(`   Company: ${companyId}`);
+    console.log(`   Profissional: ${profissionalNome}`);
+    console.log(`   Data: ${data}`);
+    console.log(`   Período: ${periodo || 'todos'}`);
+
+    // ✅ CORREÇÃO: Adicionando a query que estava faltando
+    // 1️⃣ BUSCAR HORÁRIO DE FUNCIONAMENTO DA EMPRESA
+    const { data: config, error: configError } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('id', companyId)
+      .single();
+
+    if (configError || !config) {
+      console.log(`   ❌ Erro ao buscar config: ${configError?.message}`);
+      return [];
+    }
+
+    // Determinar dia da semana
+    const dataObj = new Date(data + 'T00:00:00');
+    const diasSemana = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+    const diaSemana = diasSemana[dataObj.getDay()];
+
+    console.log(`   📅 Dia da semana: ${diaSemana}`);
+
+    // Buscar horários do dia
+    const horarios = config.horarios_funcionamento?.[diaSemana];
+    
+    if (!horarios || !horarios.aberto) {
+      console.log(`   ❌ Empresa fechada neste dia`);
+      return [];
+    }
+
+    const { inicio, fim } = horarios;
+    console.log(`   ⏰ Horário funcionamento: ${inicio} - ${fim}`);
+
+    // 2️⃣ GERAR TODOS OS HORÁRIOS POSSÍVEIS (30 em 30 min)
+    const todosHorarios: string[] = [];
+    let [horaInicio, minInicio] = inicio.split(':').map(Number);
+    const [horaFim, minFim] = fim.split(':').map(Number);
+
+    let horaAtual = horaInicio;
+    let minAtual = minInicio;
+
+    while (horaAtual < horaFim || (horaAtual === horaFim && minAtual < minFim)) {
+      const horaStr = String(horaAtual).padStart(2, '0');
+      const minStr = String(minAtual).padStart(2, '0');
+      todosHorarios.push(`${horaStr}:${minStr}`);
+
+      minAtual += 30;
+      if (minAtual >= 60) {
+        minAtual = 0;
+        horaAtual++;
+      }
+    }
+
+    console.log(`   ✅ Horários base gerados: ${todosHorarios.length}`);
+
+    // 3️⃣ FILTRAR POR PERÍODO (se fornecido)
+    let horariosFiltrados = todosHorarios;
+
+    if (periodo) {
+      horariosFiltrados = todosHorarios.filter(h => {
+        const [hora] = h.split(':').map(Number);
+        
+        if (periodo === 'manhã') return hora >= 6 && hora < 12;
+        if (periodo === 'tarde') return hora >= 12 && hora < 18;
+        if (periodo === 'noite') return hora >= 18 && hora <= 23;
+        
+        return true;
+      });
+
+      console.log(`   🕐 Filtrado por ${periodo}: ${horariosFiltrados.length} horários`);
+    }
+
+    // 4️⃣ SE FOR HOJE, FILTRAR HORÁRIOS QUE JÁ PASSARAM
+    const hoje = new Date().toISOString().split('T')[0];
+    
+    if (data === hoje) {
+      const agora = new Date();
+      const horaAtualNum = agora.getHours();
+      const minAtualNum = agora.getMinutes();
+
+      horariosFiltrados = horariosFiltrados.filter(h => {
+        const [hora, min] = h.split(':').map(Number);
+        
+        // Só incluir se for pelo menos 1h depois da hora atual
+        if (hora > horaAtualNum + 1) return true;
+        if (hora === horaAtualNum + 1 && min >= minAtualNum) return true;
+        
+        return false;
+      });
+
+      console.log(`   ⏰ Filtrado por hora atual (${horaAtualNum}:${minAtualNum}): ${horariosFiltrados.length} horários`);
+    }
+
+    // 5️⃣ BUSCAR AGENDAMENTOS JÁ EXISTENTES
+    const { data: agendamentos, error: agendError } = await supabase
+      .from('appointments')
+      .select('horario')
+      .eq('company_id', companyId)
+      .eq('data', data)
+      .eq('profissional', profissionalNome)
+      .in('status', ['confirmado', 'pendente']);
+
+    if (agendError) {
+      console.log(`   ⚠️ Erro ao buscar agendamentos: ${agendError.message}`);
+    }
+
+    const horariosOcupados = agendamentos?.map(a => a.horario) || [];
+    console.log(`   📌 Horários ocupados: ${horariosOcupados.length}`);
+
+    // 6️⃣ FILTRAR HORÁRIOS OCUPADOS
+    const horariosLivres = horariosFiltrados.filter(h => !horariosOcupados.includes(h));
+
+    console.log(`   ✅ Horários disponíveis: ${horariosLivres.length}`);
+    console.log(`   Lista: ${horariosLivres.join(', ')}`);
+
+    return horariosLivres;
+
+  } catch (error) {
+    console.error('❌ Erro ao buscar horários disponíveis:', error);
+    return [];
+  }
+};
+
+// ============================================
+// ✅ NOVO: VERIFICAR PERÍODOS DISPONÍVEIS
+// ============================================
+
+const verificarPeriodosDisponiveis = async (
+  companyId: string,
+  profissionalNome: string,
+  data: string
+): Promise<string[]> => {
+  try {
+    console.log(`\n📊 [PERÍODOS] Verificando disponibilidade...`);
+
+    const periodosDisponiveis: string[] = [];
+
+    // Verificar manhã
+    const horariosManha = await buscarHorariosDisponiveis(companyId, profissionalNome, data, 'manhã');
+    if (horariosManha.length > 0) {
+      periodosDisponiveis.push('manhã');
+    }
+
+    // Verificar tarde
+    const horariosTarde = await buscarHorariosDisponiveis(companyId, profissionalNome, data, 'tarde');
+    if (horariosTarde.length > 0) {
+      periodosDisponiveis.push('tarde');
+    }
+
+    // Verificar noite
+    const horariosNoite = await buscarHorariosDisponiveis(companyId, profissionalNome, data, 'noite');
+    if (horariosNoite.length > 0) {
+      periodosDisponiveis.push('noite');
+    }
+
+    console.log(`   ✅ Períodos com vaga: ${periodosDisponiveis.join(', ') || 'nenhum'}`);
+
+    return periodosDisponiveis;
+
+  } catch (error) {
+    console.error('❌ Erro ao verificar períodos disponíveis:', error);
+    return [];
+  }
 };
 
 // ============================================
@@ -77,6 +265,7 @@ const extrairData = (
     const ano = hoje.getFullYear();
     const mes = String(hoje.getMonth() + 1).padStart(2, '0');
     const dia = String(hoje.getDate()).padStart(2, '0');
+    console.log(`   ✅ Data extraída: hoje (${ano}-${mes}-${dia})`);
     return `${ano}-${mes}-${dia}`;
   }
   
@@ -239,7 +428,7 @@ const extrairPeriodo = (mensagem: string): string | null => {
 };
 
 // ============================================
-// ✅ FUNÇÃO PRINCIPAL: EXTRAIR DADOS (COM MEMÓRIA!)
+// ✅ FUNÇÃO PRINCIPAL: EXTRAIR DADOS (COM MEMÓRIA + HORÁRIOS!)
 // ============================================
 
 export const extrairDadosMensagem = async (
@@ -260,11 +449,16 @@ export const extrairDadosMensagem = async (
       hora: null,
       periodo: null,
       profissional: null,
-      nome: null
+      nome: null,
+      horariosDisponiveis: [],
+      periodosDisponiveis: []
     };
 
     // Mostrar dados anteriores (se tiver)
-    const temDadosAnteriores = Object.values(dadosAcumulados).some(v => v !== null);
+    const temDadosAnteriores = Object.values(dadosAcumulados).some(v => 
+      v !== null && (Array.isArray(v) ? v.length > 0 : true)
+    );
+    
     if (temDadosAnteriores) {
       console.log(`\n   📝 Dados anteriores da conversa:`);
       if (dadosAcumulados.servico) console.log(`      Serviço: ${dadosAcumulados.servico}`);
@@ -275,7 +469,7 @@ export const extrairDadosMensagem = async (
       if (dadosAcumulados.periodo) console.log(`      Período: ${dadosAcumulados.periodo}`);
     }
 
-    // EXTRAIR SERVIÇO (se ainda não tem)
+    // EXTRAIR SERVIÇO
     if (!dadosAcumulados.servico) {
       console.log(`\n   🔍 Procurando serviço...`);
       console.log(`      Disponíveis: ${contexto.servicos.map(s => s.nome).join(', ')}`);
@@ -286,13 +480,10 @@ export const extrairDadosMensagem = async (
         console.log(`   ✅ Serviço encontrado: ${servicoEncontrado}`);
       } else {
         console.log(`   ⚠️ Serviço não encontrado na extração`);
-        console.log(`      → IA vai tentar entender ou perguntar`);
       }
-    } else {
-      console.log(`   ✅ Serviço já existe (mantendo): ${dadosAcumulados.servico}`);
     }
 
-    // EXTRAIR DATA (se ainda não tem)
+    // EXTRAIR DATA
     if (!dadosAcumulados.data) {
       const dataExtraida = extrairData(mensagem, contexto);
       if (dataExtraida) {
@@ -300,11 +491,9 @@ export const extrairDadosMensagem = async (
       } else {
         console.log(`   ❌ Nenhuma data encontrada`);
       }
-    } else {
-      console.log(`   ✅ Data já existe (mantendo): ${dadosAcumulados.data}`);
     }
 
-    // EXTRAIR HORA (se ainda não tem)
+    // EXTRAIR HORA
     if (!dadosAcumulados.hora) {
       const horaExtraida = extrairHora(mensagem);
       if (horaExtraida) {
@@ -312,44 +501,58 @@ export const extrairDadosMensagem = async (
       } else {
         console.log(`   ❌ Nenhum horário encontrado`);
       }
-    } else {
-      console.log(`   ✅ Horário já existe (mantendo): ${dadosAcumulados.hora}`);
     }
 
-    // EXTRAIR PROFISSIONAL (se ainda não tem)
+    // EXTRAIR PROFISSIONAL
     if (!dadosAcumulados.profissional) {
       console.log(`   🔍 Procurando profissional...`);
       const profissionalEncontrado = extrairProfissional(mensagem, contexto);
       if (profissionalEncontrado) {
         dadosAcumulados.profissional = profissionalEncontrado;
-        console.log(`   ✅ Profissional encontrado: ${profissionalEncontrado}`);
-      } else {
-        console.log(`   ⚠️ Profissional não encontrado na extração`);
       }
-    } else {
-      console.log(`   ✅ Profissional já existe (mantendo): ${dadosAcumulados.profissional}`);
     }
 
-    // EXTRAIR NOME (se ainda não tem)
+    // Se não tem profissional, usar o único disponível (solo)
+    if (!dadosAcumulados.profissional && contexto.profissionais.length === 1) {
+      dadosAcumulados.profissional = contexto.profissionais[0].nome;
+      console.log(`   ✅ Profissional único: ${dadosAcumulados.profissional}`);
+    }
+
+    // EXTRAIR NOME
     if (!dadosAcumulados.nome) {
       const nomeExtraido = extrairNome(mensagem);
       if (nomeExtraido) {
         dadosAcumulados.nome = nomeExtraido;
         console.log(`   ✅ Nome extraído: ${nomeExtraido}`);
-      } else {
-        console.log(`   ❌ Nenhum nome encontrado`);
       }
-    } else {
-      console.log(`   ✅ Nome já existe (mantendo): ${dadosAcumulados.nome}`);
     }
 
-    // EXTRAIR PERÍODO (sempre tenta, pode mudar)
+    // EXTRAIR PERÍODO
     const periodoExtraido = extrairPeriodo(mensagem);
     if (periodoExtraido) {
       dadosAcumulados.periodo = periodoExtraido;
       console.log(`   ✅ Período extraído: ${periodoExtraido}`);
-    } else if (!dadosAcumulados.periodo) {
-      console.log(`   ❌ Nenhum período encontrado`);
+    }
+
+    // ✅ BUSCAR HORÁRIOS DISPONÍVEIS (se tiver data e profissional)
+    if (dadosAcumulados.data && dadosAcumulados.profissional) {
+      
+      // Se tem período específico, buscar horários daquele período
+      if (dadosAcumulados.periodo) {
+        dadosAcumulados.horariosDisponiveis = await buscarHorariosDisponiveis(
+          contexto.companyId,
+          dadosAcumulados.profissional,
+          dadosAcumulados.data,
+          dadosAcumulados.periodo
+        );
+      }
+      
+      // Buscar períodos disponíveis (sempre útil para a IA)
+      dadosAcumulados.periodosDisponiveis = await verificarPeriodosDisponiveis(
+        contexto.companyId,
+        dadosAcumulados.profissional,
+        dadosAcumulados.data
+      );
     }
 
     // ✅ SALVAR NA MEMÓRIA
@@ -362,6 +565,8 @@ export const extrairDadosMensagem = async (
     console.log(`   Período: ${dadosAcumulados.periodo || 'não informado'}`);
     console.log(`   Profissional: ${dadosAcumulados.profissional || 'IA vai resolver'}`);
     console.log(`   Nome: ${dadosAcumulados.nome || 'IA vai perguntar'}`);
+    console.log(`   Horários disponíveis: ${dadosAcumulados.horariosDisponiveis?.length || 0}`);
+    console.log(`   Períodos disponíveis: ${dadosAcumulados.periodosDisponiveis?.join(', ') || 'nenhum'}`);
 
     return dadosAcumulados;
 
@@ -373,7 +578,9 @@ export const extrairDadosMensagem = async (
       hora: null,
       periodo: null,
       profissional: null,
-      nome: null
+      nome: null,
+      horariosDisponiveis: [],
+      periodosDisponiveis: []
     };
   }
 };

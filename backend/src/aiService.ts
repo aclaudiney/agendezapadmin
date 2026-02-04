@@ -3,11 +3,10 @@
  * Gerencia chamadas à IA Gemini com contexto estruturado
  * Sistema de validação integrado para melhor UX
  * 
- * ✅ CORRIGIDO:
- * - Validação IMEDIATA antes de pedir confirmação
- * - IA nunca pede confirmação se horário indisponível
- * - Feedback claro e instantâneo pro cliente
- * - Cliente novo: nome só no FINAL (antes de confirmar) ⭐ NOVO!
+ * ✅ CORRIGIDO ETAPA 1:
+ * - IA VÊ horariosDisponiveis e periodosDisponiveis
+ * - IA NÃO ignora "hoje/amanhã"
+ * - IA MOSTRA horários ao cliente
  */
 
 import axios from 'axios';
@@ -40,19 +39,41 @@ export const gerarRespostaIA = async (dados: any) => {
             ? dados.servicos.map((s: any) => `- ${s}`).join('\n')
             : 'Servicos nao especificados';
 
+        // ✅ ETAPA 1: CORRIGIDO - Mostra horários e períodos disponíveis!
         let resumoDadosExtraidos = '';
         if (dadosExtraidos.servico || dadosExtraidos.data || dadosExtraidos.hora) {
           resumoDadosExtraidos = `\n📋 DADOS JA INFORMADOS PELO CLIENTE:\n`;
           if (dadosExtraidos.servico) resumoDadosExtraidos += `✅ Servico: ${dadosExtraidos.servico}\n`;
-          if (dadosExtraidos.data) resumoDadosExtraidos += `✅ Data: ${dadosExtraidos.data}\n`;
+          
+          // ✅ ETAPA 1: Formata data corretamente
+          if (dadosExtraidos.data) {
+            const [ano, mes, dia] = dadosExtraidos.data.split('-');
+            const dataFormatada = `${dia}/${mes}/${ano}`;
+            resumoDadosExtraidos += `✅ Data: ${dataFormatada} (${dadosExtraidos.data})\n`;
+          }
+          
           if (dadosExtraidos.periodo) resumoDadosExtraidos += `✅ Periodo: ${dadosExtraidos.periodo}\n`;
           if (dadosExtraidos.hora) resumoDadosExtraidos += `✅ Horario: ${dadosExtraidos.hora}\n`;
           if (dadosExtraidos.profissional) resumoDadosExtraidos += `✅ Profissional: ${dadosExtraidos.profissional}\n`;
           if (dadosExtraidos.nome) resumoDadosExtraidos += `✅ Nome: ${dadosExtraidos.nome}\n`;
+          
+          // ✅ ETAPA 1: NOVO - Horários disponíveis
+          if (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 0) {
+            resumoDadosExtraidos += `\n🕐 HORÁRIOS DISPONÍVEIS ${dadosExtraidos.periodo ? `(${dadosExtraidos.periodo})` : ''}:\n`;
+            resumoDadosExtraidos += dadosExtraidos.horariosDisponiveis.join(', ') + '\n';
+            resumoDadosExtraidos += `\n⚠️ CRÍTICO: Mostre ESTES horários ao cliente! Não invente outros!\n`;
+            resumoDadosExtraidos += `⚠️ Se cliente escolher horário, VALIDE se está nesta lista!\n`;
+          } else if (dadosExtraidos.data && dadosExtraidos.profissional && dadosExtraidos.periodo) {
+            resumoDadosExtraidos += `\n❌ NENHUM HORÁRIO DISPONÍVEL para ${dadosExtraidos.periodo}!\n`;
+            resumoDadosExtraidos += `⚠️ Informe ao cliente e sugira outro período!\n`;
+          }
+          
+
+          
           resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
         }
 
-        // INFORMAÇÕES DE VALIDAÇÃO (já corrigido anteriormente)
+        // INFORMAÇÕES DE VALIDAÇÃO
         let infoValidacao = '';
         
         if (dadosExtraidos.hora && !validacoes.horarioValido) {
@@ -146,16 +167,14 @@ export const gerarRespostaIA = async (dados: any) => {
 📋 FLUXO: AGENDAR (Cliente Existente)
 
 1️⃣ SAUDAÇÃO INICIAL:
-   - Se primeira mensagem: "Oi ${dados.clienteNome}! Como posso ajudar?"
-   - Se continuação: Continue naturalmente
+   ${dadosExtraidos.servico || dadosExtraidos.data ? 
+     '⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para o próximo passo!' : 
+     '✅ Se primeira mensagem: "Oi ${dados.clienteNome}! Como posso ajudar?"'}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Qual serviço você quer agendar?"'}
 
-3️⃣ COLETAR DATA:
-   ${dadosExtraidos.data ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Para qual dia?"'}
 
-4️⃣ COLETAR PERÍODO/HORÁRIO (✅ CORRIGIDO):
    ${dadosExtraidos.hora ? 
      (validacoes.horarioValido ? 
        '✅ Horário VÁLIDO e DISPONÍVEL - pode CONFIRMAR' : 
@@ -226,7 +245,7 @@ Cliente disse "sim"/"ok"/"confirma"
                     instrucoesPorTipo = `Seja prestativo e natural com ${dados.clienteNome}!`;
             }
         } else {
-            // ✅ CLIENTE NOVO - CORRIGIDO!
+            // ✅ CLIENTE NOVO
             contextoCliente = `👤 Cliente NOVO - não está cadastrado\n⚠️ Você DEVE pedir o nome ANTES DE CONFIRMAR (não no início!)`;
 
             switch (dados.tipoConversa) {
@@ -238,9 +257,9 @@ Cliente disse "sim"/"ok"/"confirma"
    NÃO peça nome no início da conversa!
 
 1️⃣ SAUDAÇÃO INICIAL:
-   - Se mensagem é saudação simples ("oi", "olá"): "Oi! Bem-vindo! Como posso ajudar?"
-   - Se mensagem já menciona agendamento: vá para próximo passo
-   - NÃO peça nome ainda!
+   ${dadosExtraidos.servico || dadosExtraidos.data ? 
+     '⚠️ Cliente JÁ DISSE o que quer!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para próximo passo!' :
+     '✅ Se mensagem é saudação simples ("oi", "olá"): "Oi! Bem-vindo! Como posso ajudar?"\n   ✅ Se mensagem já menciona agendamento: vá para próximo passo\n   ❌ NÃO peça nome ainda!'}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Qual serviço?"'}
@@ -356,6 +375,8 @@ ${infoValidacao}
    - Se horário ocupado/inválido, SEMPRE ofereça alternativas IMEDIATAMENTE
    - Múltiplos profissionais? LISTE TODOS
    - Cliente novo? Peça nome só ANTES DE CONFIRMAR (não no início!)
+   - Se tem horariosDisponiveis → MOSTRE ao cliente!
+   - Se tem periodosDisponiveis → Pergunte qual período!
    
 4. 🔧 USO DE FERRAMENTAS:
    - Quando tiver TODOS os dados VÁLIDOS: use 'confirmar_agendamento'
@@ -500,7 +521,7 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
     }
 };
 
-// Function calls (mantém igual)
+// Function calls
 const processarFunctionCall = async (
     nomeFuncao: string,
     args: any,
@@ -598,7 +619,6 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
         if (resultadoAgendamento.status === 'sucesso') {
             console.log(`   Agendamento criado com sucesso!`);
             
-            // Forçamos o tipo para 'any' para o TypeScript parar de reclamar das propriedades
             const res = resultadoAgendamento as any;
             
             const [ano, mes, dia] = res.data.split('-');

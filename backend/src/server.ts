@@ -4,12 +4,16 @@ import 'dotenv/config';
 import { connectToWhatsApp, initAllSessions, desconectarWhatsApp } from './whatsapp.js';
 import { db, supabase } from './supabase.js';
 import { v4 as uuidv4 } from 'uuid';
+import crmRoutes from './routes/crmRoutes.js'; // ✅ ADICIONADO!
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+
+// ✅ ROTAS CRM - ADICIONAR LOGO APÓS express.json()
+app.use('/api/crm', crmRoutes); // ✅ NOVO!
 
 // ✅ INTERFACE PARA TIPAR REQ.PARAMS CORRETAMENTE
 interface RequestWithCompanyId extends Request {
@@ -767,5 +771,8 @@ app.listen(PORT, async () => {
     console.log(`   - WhatsApp Connect: POST /whatsapp/connect/:companyId`);
     console.log(`   - WhatsApp Logout: POST /whatsapp/logout/:companyId`);
     console.log(`   - SuperAdmin: GET /admin/companies`);
-    console.log(`   - Criar Empresa: POST /admin/companies\n`);
+    console.log(`   - Criar Empresa: POST /admin/companies`);
+    console.log(`   - CRM Conversas: GET /api/crm/conversations/:companyId`); // ✅ NOVO!
+    console.log(`   - CRM Mensagens: GET /api/crm/messages/:companyId/:phone`); // ✅ NOVO!
+    console.log(`   - CRM Stats: GET /api/crm/stats/:companyId\n`); // ✅ NOVO!
 });

@@ -3,6 +3,9 @@
  * Gerencia conexoes WhatsApp, recebe mensagens e integra com IA
  * 
  * ✅ CORRIGIDO: Suporte a mensagens de áudio (Groq Whisper)
+ * ✅ NOVO: Função enviarMensagemManual para CRM
+ * ✅ CORRIGIDO: Usa remoteJidAlt para pegar número real
+ * ✅ CORRIGIDO: Status da sessão atualiza corretamente
  */
 
 import makeWASocket, { 
@@ -27,6 +30,7 @@ import {
 } from './handlers/messageHandler.js';
 import { gerarRespostaIA } from './aiService.js';
 import { converterAudioParaTexto } from './audioService.js';
+import { salvarMensagemWhatsApp } from './services/messageLoggerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +49,53 @@ interface Session {
 const sessions = new Map<string, Session>();
 const baseDocsPath = path.resolve(__dirname, '..', 'sessions');
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+// ============================================
+// EXPORTAR SESSIONS PARA ACESSO EXTERNO (CRM)
+// ============================================
+export { sessions };
+
+// ============================================
+// FUNÇÃO: ENVIAR MENSAGEM MANUAL (PARA CRM)
+// ============================================
+export const enviarMensagemManual = async (
+    companyId: string, 
+    clientPhone: string, 
+    message: string
+) => {
+    console.log(`📤 [MANUAL CRM] Enviando para ${clientPhone} da empresa ${companyId}`);
+    
+    const session = sessions.get(companyId);
+    
+    if (!session || !session.sock || session.status !== 'connected') {
+        throw new Error('WhatsApp não está conectado para esta empresa');
+    }
+
+    // Formatar JID
+    const jid = `${clientPhone}@s.whatsapp.net`;
+    
+    try {
+        // Enviar mensagem
+        await session.sock.sendMessage(jid, { text: message });
+        console.log(`✅ [MANUAL CRM] Mensagem enviada com sucesso`);
+        
+        // Salvar no banco
+        await salvarMensagemWhatsApp({
+            companyId,
+            clientPhone,
+            messageText: message,
+            messageType: 'text',
+            direction: 'outgoing',
+            conversationType: 'manual_crm'
+        });
+        
+        console.log(`💾 [MANUAL CRM] Mensagem salva no banco`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [MANUAL CRM] Erro ao enviar:`, error);
+        throw error;
+    }
+};
 
 // ============================================
 // 1. ATUALIZAR STATUS NO BANCO
@@ -130,8 +181,16 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             console.log(`[${companyName}] Novo QR Code gerado.`);
         }
 
+        // ✅ QUANDO CONECTA - ATUALIZAR STATUS (ESSENCIAL PARA O CRM!)
         if (connection === 'open') {
             await updateDatabaseStatus(companyId, 'connected', null);
+            
+            // ✅ ATUALIZAR STATUS DA SESSÃO NO MAP
+            const session = sessions.get(companyId);
+            if (session) {
+                session.status = 'connected';
+            }
+            
             console.log(`[${companyName}] Conectado com sucesso!`);
         }
 
@@ -164,39 +223,29 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             console.log(`[MSG RECEBIDA] De: ${companyName}`);
             console.log(`${'='.repeat(80)}`);
             
-            // ✅ LOGS DETALHADOS DO JID (CORRIGIDO!)
-            console.log(`\n📱 ANÁLISE COMPLETA DE JID:`);
-            console.log(`   remoteJid: ${msg.key.remoteJid || 'null'}`);
-            console.log(`   participant: ${msg.key.participant || 'null'}`);
-            console.log(`   fromMe: ${msg.key.fromMe}`);
-            
-            // ✅ PRIORIZAR remoteJid (número real do WhatsApp)
-            let jid = msg.key.remoteJid || msg.key.participant;
+            // ✅ PRIORIZAR remoteJidAlt (número REAL) > remoteJid > participant
+            let jid = (msg.key as any).remoteJidAlt || msg.key.remoteJid || msg.key.participant;
             
             if (!jid) {
                 console.log(`   ❌ NENHUM JID VÁLIDO ENCONTRADO!`);
                 return;
             }
             
-            console.log(`\n✅ JID SELECIONADO: ${jid}`);
-            
             // ✅ EXTRAIR NÚMERO LIMPO
             let numeroLimpo = jid.split('@')[0];
-            console.log(`   Número base extraído: ${numeroLimpo}`);
             
             // Se é grupo, pegar participant
             if (jid.includes('@g.us') && msg.key.participant) {
                 numeroLimpo = msg.key.participant.split('@')[0];
-                console.log(`   📱 GRUPO DETECTADO - Usando participant: ${numeroLimpo}`);
             }
             
-            console.log(`   📞 NÚMERO FINAL QUE SERÁ SALVO: ${numeroLimpo}`);
-            console.log(`${'='.repeat(80)}\n`);
+            console.log(`   📞 JID: ${jid} | Número: ${numeroLimpo}`);
 
             // ============================================
             // ✅ EXTRAIR TEXTO DA MENSAGEM (COM SUPORTE A ÁUDIO!)
             // ============================================
             let textoRecebido = '';
+            let tipoMensagemOrigem = 'text';
 
             // TEXTO SIMPLES
             if (msg.message.conversation) {
@@ -206,12 +255,12 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             else if (msg.message.extendedTextMessage?.text) {
                 textoRecebido = msg.message.extendedTextMessage.text;
             }
-            // ✅ ÁUDIO (NOVO!)
+            // ✅ ÁUDIO
             else if (msg.message.audioMessage) {
+                tipoMensagemOrigem = 'audio';
                 console.log(`   🎙️ Mensagem de áudio detectada`);
                 
                 try {
-                    // Download do áudio
                     const buffer = await downloadMediaMessage(
                         msg,
                         'buffer',
@@ -222,18 +271,14 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
                         }
                     );
 
-                    // Criar pasta temp se não existir
                     const tempDir = path.join(__dirname, '..', 'temp');
                     if (!fs.existsSync(tempDir)) {
                         fs.mkdirSync(tempDir, { recursive: true });
                     }
 
-                    // Salvar temporariamente
                     const audioPath = path.join(tempDir, `audio_${Date.now()}.ogg`);
                     fs.writeFileSync(audioPath, buffer);
-                    console.log(`   📁 Áudio salvo em: ${audioPath}`);
 
-                    // Converter para texto usando Groq
                     const resultado = await converterAudioParaTexto(audioPath);
 
                     if (resultado.sucesso && resultado.texto) {
@@ -254,52 +299,8 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
                     return;
                 }
             }
-            // MENSAGEM DE VOZ (PTT)
-            else if (msg.message.audioMessage?.ptt) {
-                console.log(`   🎙️ Mensagem de voz (PTT) detectada`);
-                
-                try {
-                    const buffer = await downloadMediaMessage(
-                        msg,
-                        'buffer',
-                        {},
-                        {
-                            logger: console as any,
-                            reuploadRequest: sock.updateMediaMessage
-                        }
-                    );
 
-                    const tempDir = path.join(__dirname, '..', 'temp');
-                    if (!fs.existsSync(tempDir)) {
-                        fs.mkdirSync(tempDir, { recursive: true });
-                    }
-
-                    const audioPath = path.join(tempDir, `voice_${Date.now()}.ogg`);
-                    fs.writeFileSync(audioPath, buffer);
-                    console.log(`   📁 Voz salva em: ${audioPath}`);
-
-                    const resultado = await converterAudioParaTexto(audioPath);
-
-                    if (resultado.sucesso && resultado.texto) {
-                        textoRecebido = resultado.texto;
-                        console.log(`   ✅ Voz convertida: "${textoRecebido}"`);
-                    } else {
-                        console.error(`   ❌ Erro ao converter voz: ${resultado.erro}`);
-                        await sock.sendMessage(jid, { 
-                            text: 'Desculpa, não consegui entender a mensagem de voz. Pode tentar de novo?' 
-                        });
-                        return;
-                    }
-                } catch (audioError) {
-                    console.error(`   ❌ Erro ao processar voz:`, audioError);
-                    await sock.sendMessage(jid, { 
-                        text: 'Ops, tive um problema com a mensagem de voz. Pode tentar de novo?' 
-                    });
-                    return;
-                }
-            }
-
-            // Se não tem texto e não é áudio
+            // Se não tem texto
             if (!textoRecebido) {
                 console.log(`   ⚠️ Tipo de mensagem não suportado`);
                 return;
@@ -320,30 +321,63 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             const dadosExtraidos = await extrairDadosMensagem(textoRecebido, contexto);
             console.log(`   ✅ Dados extraídos`);
 
-            // 3️⃣ VALIDAR E ENRIQUECER (NOVO!)
+            // 3️⃣ VALIDAR E ENRIQUECER
             const dadosValidados = await validarDadosExtraidos(dadosExtraidos, contexto);
             console.log(`   ✅ Dados validados`);
+
+            // 💾 SALVAR MENSAGEM DO CLIENTE NO BANCO
+            await salvarMensagemWhatsApp({
+                companyId,
+                clientPhone: numeroLimpo,
+                clientName: contexto.cliente.nome || 'Cliente WhatsApp',
+                messageText: textoRecebido,
+                messageType: tipoMensagemOrigem,
+                direction: 'incoming',
+                extractedData: dadosValidados,
+                conversationType: contexto.tipo
+            });
+            console.log(`   💾 Mensagem do cliente salva no CRM`);
 
             // 4️⃣ VERIFICAR SE TEVE ERRO CRÍTICO
             const validacoes = dadosValidados.validacoes;
             
             if (validacoes && !validacoes.diaAberto && validacoes.motivoErro) {
-                // Dia fechado ou fora de funcionamento
                 console.log(`   ⚠️ Erro de validação: ${validacoes.motivoErro}`);
                 await delay(1000);
                 await sock.sendMessage(jid, { text: validacoes.motivoErro });
+                
+                // Salvar resposta de erro
+                await salvarMensagemWhatsApp({
+                    companyId,
+                    clientPhone: numeroLimpo,
+                    clientName: contexto.cliente.nome || 'Cliente WhatsApp',
+                    messageText: validacoes.motivoErro,
+                    messageType: 'text',
+                    direction: 'outgoing',
+                    conversationType: contexto.tipo
+                });
                 return;
             }
 
             if (validacoes && validacoes.horarioPassado && validacoes.motivoErro) {
-                // Horário no passado
                 console.log(`   ⚠️ Erro de validação: ${validacoes.motivoErro}`);
                 await delay(1000);
                 await sock.sendMessage(jid, { text: validacoes.motivoErro });
+                
+                // Salvar resposta de erro
+                await salvarMensagemWhatsApp({
+                    companyId,
+                    clientPhone: numeroLimpo,
+                    clientName: contexto.cliente.nome || 'Cliente WhatsApp',
+                    messageText: validacoes.motivoErro,
+                    messageType: 'text',
+                    direction: 'outgoing',
+                    conversationType: contexto.tipo
+                });
                 return;
             }
 
-            // 5️⃣ PREPARAR DADOS PARA IA (com validações incluídas)
+            // 5️⃣ PREPARAR DADOS PARA IA
             const dadosParaIA = prepararDadosParaIA(contexto, dadosValidados);
             console.log(`   ✅ Dados preparados para IA`);
 
@@ -372,22 +406,32 @@ export const connectToWhatsApp = async (companyId: string, companyName: string =
             });
 
             console.log(`   ✅ Resposta gerada`);
-            console.log(`   Resposta: ${respostaIA.substring(0, 80)}...`);
 
             // 7️⃣ ENVIAR RESPOSTA
             if (respostaIA) {
                 await delay(1000);
                 await sock.sendMessage(jid, { text: respostaIA });
-                console.log(`   ✅ Mensagem enviada!\n`);
+                console.log(`   ✅ Mensagem enviada!`);
+
+                // 💾 SALVAR RESPOSTA DA IA NO BANCO
+                await salvarMensagemWhatsApp({
+                    companyId,
+                    clientPhone: numeroLimpo,
+                    clientName: contexto.cliente.nome || 'Cliente WhatsApp',
+                    messageText: respostaIA,
+                    messageType: 'text',
+                    direction: 'outgoing',
+                    conversationType: contexto.tipo,
+                    aiResponse: respostaIA
+                });
+                console.log(`   💾 Resposta da IA salva no CRM\n`);
             }
 
         } catch (error) {
             console.error(`\n❌ Erro na mensagem [${companyName}]:`, error);
             
             try {
-                const jidFallback = msg.key.remoteJid 
-                    || msg.key.participant 
-                    || '';
+                const jidFallback = msg.key.remoteJid || msg.key.participant || '';
                 
                 if (jidFallback) {
                     await sock.sendMessage(jidFallback, { 
