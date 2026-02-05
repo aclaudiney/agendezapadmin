@@ -1,27 +1,27 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { API_URL } from '../config/api';
 import {
   TrendingUp, Users, Calendar, Scissors,
-  CheckCircle2, Clock, X, Filter,
+  Clock, Filter,
   ArrowUpRight, ArrowDownRight, MoreHorizontal
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
-import axios from 'axios';
-import { dashboardService, DashboardStats, ChartDataItem, PopularService, ProfessionalRanking } from '../services/dashboardService';
+import { dashboardService } from '../services/dashboardService';
 
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [empresaBloqueada, setEmpresaBloqueada] = useState(false);
-  const [period, setPeriod] = useState(7);
+  const [period, setPeriod] = useState(30);
+  const [selectedProfessional, setSelectedProfessional] = useState<string>('');
+  const [professionalsList, setProfessionalsList] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
     verificarEmpresaAtiva();
-  }, [period]);
+  }, [period, selectedProfessional]);
 
   const verificarEmpresaAtiva = async () => {
     try {
@@ -33,16 +33,36 @@ const Dashboard: React.FC = () => {
         return;
       }
 
-      const resposta = await axios.get(`${API_URL}/verify-company/${companyId}`);
+      // Checa status da empresa
+      const { data: empresa, error: erroEmpresa } = await supabase
+        .from('companies')
+        .select('active')
+        .eq('id', companyId)
+        .single();
 
-      if (!resposta.data.ativa) {
+      if (erroEmpresa || !empresa?.active) {
         setEmpresaBloqueada(true);
         return;
       }
 
-      const dashData = await dashboardService.fetchDashboardData(companyId, period);
+      // Carrega lista de profissionais (se ainda não carregou)
+      if (professionalsList.length === 0) {
+        const { data: profs } = await supabase
+          .from('profissionais')
+          .select('id, nome')
+          .eq('company_id', companyId);
+        if (profs) setProfessionalsList(profs);
+      }
+
+      // Busca dados do Dashboard com filtro de profissional
+      const dashData = await dashboardService.fetchDashboardData(
+        companyId,
+        period,
+        selectedProfessional || undefined
+      );
       setData(dashData);
     } catch (error: any) {
+      console.error('Erro dashboard:', error);
       setEmpresaBloqueada(true);
     } finally {
       setLoading(false);
@@ -81,6 +101,15 @@ const Dashboard: React.FC = () => {
 
   const { stats, revenueFlow, popularServices, ranking, todayAppointments } = data;
 
+  // Filtrar dados por profissional se selecionado
+  const filteredRanking = selectedProfessional
+    ? ranking.filter((p: any) => p.id === selectedProfessional)
+    : ranking;
+
+  const filteredTodayAppointments = selectedProfessional
+    ? todayAppointments.filter((apt: any) => apt.profissional_id === selectedProfessional)
+    : todayAppointments;
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-8 pb-10 animate-in fade-in duration-700">
       {/* HEADER */}
@@ -90,20 +119,34 @@ const Dashboard: React.FC = () => {
           <p className="text-slate-500 mt-1">Visualize e gerencie todos os agendamentos da sua agenda.</p>
         </div>
 
-        <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm self-start">
-          {[7, 30, 90].map(d => (
-            <button
-              key={d}
-              onClick={() => setPeriod(d)}
-              className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-all ${period === d ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          {/* Filtro de Profissional */}
+          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
+            <Users size={16} className="text-slate-400" />
+            <select
+              value={selectedProfessional}
+              onChange={(e) => setSelectedProfessional(e.target.value)}
+              className="bg-transparent border-none text-sm font-semibold text-slate-700 focus:ring-0 py-0"
             >
-              {d} dias
-            </button>
-          ))}
-          <div className="w-[1px] h-4 bg-slate-200 mx-1"></div>
-          <button className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 rounded-lg">
-            <Filter size={14} /> Filtros
-          </button>
+              <option value="">Todos Profissionais</option>
+              {professionalsList.map(p => (
+                <option key={p.id} value={p.id}>{p.nome}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Período */}
+          <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+            {[7, 30, 90].map(d => (
+              <button
+                key={d}
+                onClick={() => setPeriod(d)}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-all ${period === d ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                {d} dias
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -184,7 +227,7 @@ const Dashboard: React.FC = () => {
               <p className="text-sm text-slate-400 mt-0.5">Faturamento dos últimos 7 dias</p>
             </div>
             <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-lg text-xs font-bold text-slate-600">
-              <TrendingUp size={14} className="text-indigo-500" /> R$ {revenueFlow.reduce((acc, curr) => acc + curr.total, 0).toLocaleString('pt-BR')}
+              <TrendingUp size={14} className="text-indigo-500" /> R$ {revenueFlow.reduce((acc: number, curr: any) => acc + curr.total, 0).toLocaleString('pt-BR')}
             </div>
           </div>
           <div className="h-[300px] w-full">
@@ -230,7 +273,7 @@ const Dashboard: React.FC = () => {
                   paddingAngle={8}
                   dataKey="percentage"
                 >
-                  {popularServices.map((entry, index) => (
+                  {popularServices.map((entry: any, index: number) => (
                     <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                   ))}
                 </Pie>
@@ -248,7 +291,7 @@ const Dashboard: React.FC = () => {
           </div>
 
           <div className="space-y-4 mt-8">
-            {popularServices.map((service, i) => (
+            {popularServices.map((service: any, i: number) => (
               <div key={i} className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: service.color }}></div>
@@ -325,7 +368,7 @@ const Dashboard: React.FC = () => {
             <button className="text-slate-400 hover:text-slate-600"><MoreHorizontal size={20} /></button>
           </div>
           <div className="space-y-6">
-            {ranking.map((prof, i) => (
+            {filteredRanking.map((prof: any) => (
               <div key={prof.id} className="flex items-center justify-between group cursor-pointer">
                 <div className="flex items-center gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-slate-950 flex items-center justify-center text-white font-bold text-sm shadow-lg group-hover:scale-110 transition-transform">
@@ -341,7 +384,7 @@ const Dashboard: React.FC = () => {
                   <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden">
                     <div
                       className="h-full bg-slate-950 rounded-full"
-                      style={{ width: `${(prof.total / (ranking[0]?.total || 1)) * 100}%` }}
+                      style={{ width: `${(prof.total / (filteredRanking[0]?.total || 1)) * 100}%` }}
                     ></div>
                   </div>
                 </div>
@@ -358,18 +401,18 @@ const Dashboard: React.FC = () => {
               <p className="text-sm text-slate-400 mt-0.5">Próximos atendimentos</p>
             </div>
             <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 rounded-lg text-xs font-bold text-amber-700">
-              <Clock size={14} /> {todayAppointments.filter(a => a.status === 'pendente').length} pendentes
+              <Clock size={14} /> {filteredTodayAppointments.filter((a: any) => a.status === 'pendente').length} pendentes
             </div>
           </div>
 
-          {todayAppointments.length === 0 ? (
+          {filteredTodayAppointments.length === 0 ? (
             <div className="h-[300px] flex flex-col items-center justify-center text-slate-400 space-y-2">
               <Calendar size={40} strokeWidth={1} />
               <p className="text-sm font-medium">Nenhum agendamento para hoje</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {todayAppointments.slice(0, 5).map((apt, i) => (
+              {filteredTodayAppointments.slice(0, 5).map((apt: any) => (
                 <div key={apt.id} className="p-4 bg-slate-50 rounded-2xl border border-transparent hover:border-slate-200 transition-all flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <div className="text-base font-black text-slate-900 w-12">{apt.hora_agendamento.slice(0, 5)}</div>

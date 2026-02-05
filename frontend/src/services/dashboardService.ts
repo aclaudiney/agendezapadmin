@@ -41,7 +41,7 @@ export interface ProfessionalRanking {
 }
 
 export const dashboardService = {
-    fetchDashboardData: async (companyId: string, days: number = 30) => {
+    fetchDashboardData: async (companyId: string, days: number = 30, professionalId?: string) => {
         const now = new Date();
         const startDate = new Date();
         startDate.setDate(now.getDate() - days);
@@ -49,7 +49,7 @@ export const dashboardService = {
         const prevStartDate = new Date();
         prevStartDate.setDate(startDate.getDate() - days);
 
-        // 1. Receitas (Faturamento)
+        // 1. Receitas (Faturamento) - INCLUINDO AGENDAMENTOS CONFIRMADOS
         const { data: currentPeriodRevenue } = await supabase
             .from('financeiro')
             .select('*')
@@ -65,23 +65,28 @@ export const dashboardService = {
             .gte('data_transacao', prevStartDate.toISOString())
             .lt('data_transacao', startDate.toISOString());
 
-        const currentRevenue = currentPeriodRevenue?.reduce((sum, r) => sum + r.valor, 0) || 0;
-        const prevRevenue = prevPeriodRevenue?.reduce((sum, r) => sum + r.valor, 0) || 0;
-        const revenueTrend = prevRevenue > 0 ? ((currentRevenue - prevRevenue) / prevRevenue) * 100 : 0;
-
-        // 2. Agendamentos
-        const { data: currentPeriodApts } = await supabase
+        // 2. Agendamentos - COM FILTRO DE PROFISSIONAL
+        let currentAptsQuery = supabase
             .from('agendamentos')
             .select('id, data_agendamento, status, servico_id, profissional_id, hora_agendamento, cliente_id')
             .eq('company_id', companyId)
             .gte('data_agendamento', startDate.toISOString().split('T')[0]);
 
-        const { data: prevPeriodApts } = await supabase
+        let prevAptsQuery = supabase
             .from('agendamentos')
-            .select('id')
+            .select('id, status, servico_id, profissional_id')
             .eq('company_id', companyId)
             .gte('data_agendamento', prevStartDate.toISOString().split('T')[0])
             .lt('data_agendamento', startDate.toISOString().split('T')[0]);
+
+        // Aplicar filtro de profissional se fornecido
+        if (professionalId) {
+            currentAptsQuery = currentAptsQuery.eq('profissional_id', professionalId);
+            prevAptsQuery = prevAptsQuery.eq('profissional_id', professionalId);
+        }
+
+        const { data: currentPeriodApts } = await currentAptsQuery;
+        const { data: prevPeriodApts } = await prevAptsQuery;
 
         const currentApts = currentPeriodApts?.length || 0;
         const prevApts = prevPeriodApts?.length || 0;
@@ -92,6 +97,38 @@ export const dashboardService = {
         const { data: services } = await supabase.from('servicos').select('*').eq('company_id', companyId);
         const { data: clients } = await supabase.from('clientes').select('*').eq('company_id', companyId);
 
+        // CORREÇÃO: Calcular receita SEM DUPLICAÇÃO
+        // IDs de agendamentos que já têm lançamento manual no financeiro
+        const aptsWithManualEntry = new Set(
+            currentPeriodRevenue?.filter(r => r.agendamento_id).map(r => r.agendamento_id) || []
+        );
+
+        const calculateAppointmentRevenue = (apts: any[]) => {
+            return (apts || []).reduce((total, apt) => {
+                const status = (apt.status || '').toLowerCase();
+                // Só conta se estiver confirmado/concluído E não tiver lançamento manual
+                if (['confirmed', 'confirmado', 'completed', 'concluido', 'concluído'].includes(status) && !aptsWithManualEntry.has(apt.id)) {
+                    const servico = services?.find(s => s.id === apt.servico_id);
+                    return total + (servico?.preco || 0);
+                }
+                return total;
+            }, 0);
+        };
+
+        // Filtrar receitas manuais por profissional se necessário
+        let filteredCurrentRevenue = currentPeriodRevenue || [];
+        if (professionalId) {
+            filteredCurrentRevenue = filteredCurrentRevenue.filter(r => {
+                if (!r.agendamento_id) return false; // Só conta se tiver agendamento vinculado
+                const apt = currentPeriodApts?.find(a => a.id === r.agendamento_id);
+                return apt?.profissional_id === professionalId;
+            });
+        }
+
+        const currentRevenue = (filteredCurrentRevenue.reduce((sum, r) => sum + r.valor, 0) || 0) + calculateAppointmentRevenue(currentPeriodApts);
+        const prevRevenue = (prevPeriodRevenue?.reduce((sum, r) => sum + r.valor, 0) || 0) + calculateAppointmentRevenue(prevPeriodApts);
+        const revenueTrend = prevRevenue > 0 ? ((currentRevenue - prevRevenue) / prevRevenue) * 100 : 0;
+
         // 4. Fluxo de Receitas (Últimos 7 dias)
         const last7Days = Array.from({ length: 7 }, (_, i) => {
             const d = new Date();
@@ -101,9 +138,13 @@ export const dashboardService = {
 
         const revenueFlow: ChartDataItem[] = last7Days.map(date => {
             const dayName = new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
-            const total = currentPeriodRevenue?.filter(r => r.data_transacao.startsWith(date))
+            const manualTotal = currentPeriodRevenue?.filter(r => r.data_transacao.startsWith(date))
                 .reduce((sum, r) => sum + r.valor, 0) || 0;
-            return { name: dayName.charAt(0).toUpperCase() + dayName.slice(1), total };
+
+            const aptsOnDay = currentPeriodApts?.filter(a => a.data_agendamento === date) || [];
+            const aptsTotal = calculateAppointmentRevenue(aptsOnDay);
+
+            return { name: dayName.charAt(0).toUpperCase() + dayName.slice(1), total: manualTotal + aptsTotal };
         });
 
         // 5. Serviços Populares (Top 3)
@@ -114,18 +155,20 @@ export const dashboardService = {
             serviceCounts[name] = (serviceCounts[name] || 0) + 1;
         });
 
-        const totalApts = currentPeriodApts?.length || 1;
+        const totalAptsLen = currentPeriodApts?.length || 1;
         const popularServices: PopularService[] = Object.entries(serviceCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 3)
             .map(([name, count], i) => ({
                 name,
-                percentage: Math.round((count / totalApts) * 100),
+                percentage: Math.round((count / totalAptsLen) * 100),
                 color: ['#000000', '#6B7280', '#D1D5DB'][i]
             }));
 
         // 6. Ranking de Profissionais
         const profRanking: { [key: string]: { total: number, count: number, nome: string } } = {};
+
+        // Somar receitas manuais
         currentPeriodRevenue?.forEach(receita => {
             const apt = currentPeriodApts?.find(a => a.id === receita.agendamento_id);
             if (apt) {
@@ -135,6 +178,22 @@ export const dashboardService = {
                         profRanking[prof.id] = { total: 0, count: 0, nome: prof.nome };
                     }
                     profRanking[prof.id].total += receita.valor;
+                    profRanking[prof.id].count += 1;
+                }
+            }
+        });
+
+        // Somar agendamentos confirmados
+        currentPeriodApts?.forEach(apt => {
+            const status = (apt.status || '').toLowerCase();
+            if (['confirmed', 'confirmado', 'completed', 'concluido', 'concluído'].includes(status)) {
+                const prof = professionals?.find(p => p.id === apt.profissional_id);
+                const servico = services?.find(s => s.id === apt.servico_id);
+                if (prof && servico) {
+                    if (!profRanking[prof.id]) {
+                        profRanking[prof.id] = { total: 0, count: 0, nome: prof.nome };
+                    }
+                    profRanking[prof.id].total += servico.preco;
                     profRanking[prof.id].count += 1;
                 }
             }
