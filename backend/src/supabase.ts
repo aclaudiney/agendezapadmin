@@ -521,7 +521,7 @@ export const db = {
         }
     },
 
-    async criarEmpresa(nome: string, descricao?: string, whatsappNumber?: string) {
+    async criarEmpresa(nome: string, descricao?: string, whatsappNumber?: string, setupFee: number = 0, monthlyFee: number = 0) {
         try {
             const { data, error } = await supabase
                 .from('companies')
@@ -529,6 +529,9 @@ export const db = {
                     name: nome,
                     descricao: descricao || null,
                     whatsapp_number: whatsappNumber || null,
+                    setup_fee: setupFee,
+                    monthly_fee: monthlyFee,
+                    subscription_status: 'active',
                     active: true,
                     created_at: new Date()
                 }])
@@ -575,7 +578,7 @@ export const db = {
     async desativarEmpresa(companyId: string) {
         try {
             console.log('🗑️ TENTANDO DELETAR EMPRESA:', companyId);
-            
+
             const { error } = await supabase
                 .from('companies')
                 .delete()

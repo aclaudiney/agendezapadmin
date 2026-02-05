@@ -3,7 +3,6 @@ import { X } from 'lucide-react';
 
 // ✅ PÁGINAS ANTIGAS
 import Login from './pages/Login';
-import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Appointments from './pages/Appointments';
 import Agents from './pages/Agents';
@@ -22,7 +21,10 @@ import WhatsappConfig from './pages/WhatsappConfig';
 // ✅ PÁGINAS ADMIN (COM SIDEBAR!)
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminCRMPage from './pages/admin/AdminCRMPage';
-import AdminSidebar from './components/AdminSidebar'; // ✅ NOVO!
+
+// ✅ LAYOUTS
+import AdminLayout from './components/layouts/AdminLayout';
+import MainLayout from './components/layouts/MainLayout';
 
 // ============================================
 // APP PRINCIPAL - ✅ COM SIDEBAR ADMIN
@@ -50,7 +52,7 @@ const App: React.FC = () => {
         if (usuarioSalvo && autenticadoSalvo === 'true') {
           try {
             const usuario = JSON.parse(usuarioSalvo);
-            
+
             if (usuario && usuario.email && roleStoraged) {
               console.log('✅ [APP] Sessão válida encontrada');
               setUsuario(usuario);
@@ -90,7 +92,7 @@ const App: React.FC = () => {
     try {
       const usuarioSalvo = localStorage.getItem('usuario');
       const userRoleFromStorage = localStorage.getItem('userRole') as 'admin' | 'empresa' | null;
-      
+
       if (usuarioSalvo) {
         setUsuario(JSON.parse(usuarioSalvo));
       }
@@ -101,7 +103,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAdminLogout = () => {
+  const handleLogout = () => {
     localStorage.removeItem('usuario');
     localStorage.removeItem('autenticado');
     localStorage.removeItem('userRole');
@@ -178,18 +180,18 @@ const App: React.FC = () => {
   // ROTAS PÚBLICAS
   // ============================================
 
-  const isPublicBooking = pathname.startsWith('/agendar/') || 
-                          (pathname !== '/' && 
-                           pathname !== '/login' && 
-                           pathname !== '/login-cliente' && 
-                           pathname !== '/meu-agendamento' && 
-                           pathname !== '/admin/dashboard' &&
-                           pathname !== '/admin/crm' &&
-                           pathname !== '/dashboard' &&
-                           /^\/[a-z0-9-]+$/.test(pathname));
+  const isPublicBooking = pathname.startsWith('/agendar/') ||
+    (pathname !== '/' &&
+      pathname !== '/login' &&
+      pathname !== '/login-cliente' &&
+      pathname !== '/meu-agendamento' &&
+      pathname !== '/admin/dashboard' &&
+      pathname !== '/admin/crm' &&
+      pathname !== '/dashboard' &&
+      /^\/[a-z0-9-]+$/.test(pathname));
 
   if (isPublicBooking) {
-    let slug = pathname.replace('/agendar/', '').replace(/^\//,'').replace(/\/$/,'');
+    let slug = pathname.replace('/agendar/', '').replace(/^\//, '').replace(/\/$/, '');
     console.log('📱 Abrindo PublicBooking com slug:', slug);
     return <PublicBooking slug={slug} />;
   }
@@ -204,7 +206,7 @@ const App: React.FC = () => {
 
   if (pathname === '/meu-agendamento') {
     const clienteSalvo = localStorage.getItem('clienteLogado');
-    
+
     if (!clienteSalvo) {
       console.warn('❌ Sem cliente no localStorage, redirecionando para login');
       window.location.href = '/login-cliente';
@@ -233,61 +235,49 @@ const App: React.FC = () => {
   // ✅ ADMIN - COM SIDEBAR!
   if (userRole === 'admin') {
     return (
-      <div className="flex min-h-screen bg-slate-50">
-        {/* ✅ SIDEBAR ADMIN */}
-        <AdminSidebar 
-          activePage={adminActivePage}
-          onNavigate={setAdminActivePage}
-          onLogout={handleAdminLogout}
-        />
-
-        {/* ✅ CONTEÚDO PRINCIPAL */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-8">
-            {renderAdminPage()}
-          </div>
-        </main>
-      </div>
+      <AdminLayout
+        activePage={adminActivePage}
+        onNavigate={setAdminActivePage}
+        onLogout={handleLogout}
+      >
+        {renderAdminPage()}
+      </AdminLayout>
     );
   }
 
   // ✅ EMPRESA - DASHBOARD NORMAL
   if (userRole === 'empresa') {
     return (
-      <div className="flex min-h-screen">
-        <Sidebar 
-          activePage={activePage} 
-          onNavigate={setActivePage}
-          onShowTester={() => setShowTester(true)}
-        />
-        
-        <main className="flex-1 p-8 bg-slate-50 relative">
-          <div className="flex justify-between items-center mb-8 pb-6 border-b border-slate-200">
-            <div>
-              <h1 className="text-3xl font-bold text-slate-800">{usuario?.nome_estabelecimento || 'Estabelecimento'}</h1>
-              <p className="text-slate-500 text-sm">Logado como: {usuario?.email}</p>
+      <MainLayout
+        activePage={activePage}
+        onNavigate={setActivePage}
+        onLogout={handleLogout}
+      >
+        <div className="flex justify-between items-center mb-8 pb-6 border-b border-slate-200">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-800">{usuario?.nome_estabelecimento || 'Estabelecimento'}</h1>
+            <p className="text-slate-500 text-sm">Logado como: {usuario?.email}</p>
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto">
+          {renderPage()}
+        </div>
+
+        {showTester && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+            <div className="relative w-full max-w-md">
+              <button
+                onClick={() => setShowTester(false)}
+                className="absolute -top-12 right-0 text-white hover:text-slate-200"
+              >
+                <X size={32} />
+              </button>
+              <WhatsAppSim />
             </div>
           </div>
-
-          <div className="max-w-6xl mx-auto">
-            {renderPage()}
-          </div>
-
-          {showTester && (
-            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-              <div className="relative w-full max-w-md">
-                <button 
-                  onClick={() => setShowTester(false)}
-                  className="absolute -top-12 right-0 text-white hover:text-slate-200"
-                >
-                  <X size={32} />
-                </button>
-                <WhatsAppSim />
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
+        )}
+      </MainLayout>
     );
   }
 

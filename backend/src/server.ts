@@ -4,7 +4,8 @@ import 'dotenv/config';
 import { connectToWhatsApp, initAllSessions, desconectarWhatsApp } from './whatsapp.js';
 import { db, supabase } from './supabase.js';
 import { v4 as uuidv4 } from 'uuid';
-import crmRoutes from './routes/crmRoutes.js'; // ✅ ADICIONADO!
+import crmRoutes from './routes/crmRoutes.js';
+import adminRoutes from './routes/adminRoutes.js'; // ✅ ADICIONADO!
 
 const app = express();
 app.use(cors());
@@ -13,33 +14,34 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 // ✅ ROTAS CRM - ADICIONAR LOGO APÓS express.json()
-app.use('/api/crm', crmRoutes); // ✅ NOVO!
+app.use('/api/crm', crmRoutes);
+app.use('/api/admin', adminRoutes); // ✅ NOVO!
 
 // ✅ INTERFACE PARA TIPAR REQ.PARAMS CORRETAMENTE
 interface RequestWithCompanyId extends Request {
-  params: { companyId: string };
-  empresa?: any;
+    params: { companyId: string };
+    empresa?: any;
 }
 
 interface RequestWithCompanyAndClientId extends Request {
-  params: { companyId: string; clienteId: string };
+    params: { companyId: string; clienteId: string };
 }
 
 interface RequestWithCompanyAndAgendamentoId extends Request {
-  params: { companyId: string; agendamentoId: string };
+    params: { companyId: string; agendamentoId: string };
 }
 
 // ✅ FUNÇÃO GERAR SLUG
 const gerarSlug = (nome: string): string => {
-  return nome
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .substring(0, 50);
+    return nome
+        .toLowerCase()
+        .trim()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .substring(0, 50);
 };
 
 // ============================================
@@ -47,33 +49,33 @@ const gerarSlug = (nome: string): string => {
 // ============================================
 
 const verificarEmpresaAtiva = async (req: RequestWithCompanyId, res: Response, next: NextFunction) => {
-  const { companyId } = req.params;
-  
-  if (!companyId) {
-    return next();
-  }
+    const { companyId } = req.params;
 
-  try {
-    const empresa = await db.getEmpresa(companyId);
-    
-    if (!empresa) {
-      return res.status(404).json({ error: "Empresa não encontrada" });
+    if (!companyId) {
+        return next();
     }
 
-    // ❌ SE EMPRESA ESTÁ BLOQUEADA
-    if (!empresa.active) {
-      return res.status(403).json({ 
-        error: "Empresa bloqueada",
-        message: "Esta empresa foi desativada e não pode acessar o sistema",
-        bloqueada: true
-      });
-    }
+    try {
+        const empresa = await db.getEmpresa(companyId);
 
-    req.empresa = empresa;
-    next();
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+        if (!empresa) {
+            return res.status(404).json({ error: "Empresa não encontrada" });
+        }
+
+        // ❌ SE EMPRESA ESTÁ BLOQUEADA
+        if (!empresa.active) {
+            return res.status(403).json({
+                error: "Empresa bloqueada",
+                message: "Esta empresa foi desativada e não pode acessar o sistema",
+                bloqueada: true
+            });
+        }
+
+        req.empresa = empresa;
+        next();
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
 };
 
 // ============================================
@@ -82,17 +84,17 @@ const verificarEmpresaAtiva = async (req: RequestWithCompanyId, res: Response, n
 
 app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Response) => {
     const { companyId } = req.params;
-    
+
     console.log('🔍 [VERIFY-COMPANY] Requisição recebida:', companyId);
 
     try {
         const empresa = await db.getEmpresa(companyId);
-        
+
         console.log('🔍 [VERIFY-COMPANY] Empresa encontrada:', empresa?.name);
-        
+
         if (!empresa) {
             console.log('❌ [VERIFY-COMPANY] Empresa não encontrada');
-            return res.status(404).json({ 
+            return res.status(404).json({
                 error: "Empresa não encontrada",
                 ativa: false
             });
@@ -101,7 +103,7 @@ app.get('/verify-company/:companyId', async (req: RequestWithCompanyId, res: Res
         // ❌ SE EMPRESA ESTÁ BLOQUEADA
         if (!empresa.active) {
             console.log('❌ [VERIFY-COMPANY] Empresa bloqueada');
-            return res.status(403).json({ 
+            return res.status(403).json({
                 error: "Empresa bloqueada",
                 message: "Esta empresa foi desativada e não pode acessar o sistema",
                 ativa: false,
@@ -139,7 +141,7 @@ app.post('/whatsapp/connect/:companyId', verificarEmpresaAtiva, async (req: Requ
         console.log(`📱 Iniciando conexão WhatsApp para: ${empresa.name}`);
 
         await connectToWhatsApp(companyId, empresa.name);
-        
+
         res.json({
             success: true,
             message: `Iniciando conexão para ${empresa.name}`,
@@ -157,7 +159,7 @@ app.get('/whatsapp/status/:companyId', verificarEmpresaAtiva, async (req: Reques
 
     try {
         const session = await db.getSessionaWhatsApp(companyId);
-        
+
         if (!session) {
             return res.json({
                 status: 'disconnected',
@@ -185,7 +187,7 @@ app.post('/whatsapp/logout/:companyId', verificarEmpresaAtiva, async (req: Reque
         console.log(`🚪 Desconectando WhatsApp para: ${empresa.name}`);
 
         await desconectarWhatsApp(companyId);
-        
+
         res.json({
             success: true,
             message: `Sessão ${companyId} encerrada e limpa.`,
@@ -234,7 +236,7 @@ app.get('/session/:companyId', verificarEmpresaAtiva, async (req: RequestWithCom
 
     try {
         const session = await db.getSessionaWhatsApp(companyId);
-        
+
         if (!session) {
             return res.json({
                 status: 'disconnected',
@@ -260,7 +262,7 @@ app.get('/session/:companyId', verificarEmpresaAtiva, async (req: RequestWithCom
 app.get('/admin/companies', async (req: Request, res: Response) => {
     try {
         const companies = await db.listarEmpresas();
-        
+
         const companiesComStatus = await Promise.all(
             companies.map(async (company: any) => {
                 const session = await db.getSessionaWhatsApp(company.id);
@@ -287,7 +289,7 @@ app.get('/admin/companies/:companyId', async (req: RequestWithCompanyId, res: Re
 
     try {
         const empresa = await db.getEmpresa(companyId);
-        
+
         if (!empresa) {
             return res.status(404).json({ error: "Empresa não encontrada" });
         }
@@ -323,7 +325,7 @@ app.get('/admin/companies/:companyId', async (req: RequestWithCompanyId, res: Re
 
 // ✅ CRIAR NOVA EMPRESA - COM USUÁRIO E CREDENCIAIS
 app.post('/admin/companies', async (req: Request, res: Response) => {
-    const { nome, descricao, whatsappNumber } = req.body;
+    const { nome, descricao, whatsappNumber, setupFee, monthlyFee } = req.body;
 
     try {
         if (!nome) {
@@ -339,6 +341,9 @@ app.post('/admin/companies', async (req: Request, res: Response) => {
             .insert([{
                 name: nome,
                 slug: slug,
+                setup_fee: setupFee || 0,
+                monthly_fee: monthlyFee || 0,
+                subscription_status: 'active',
                 active: true,
                 created_at: new Date().toISOString()
             }])
@@ -353,9 +358,9 @@ app.post('/admin/companies', async (req: Request, res: Response) => {
         // ✅ CRIAR USUÁRIO PARA A EMPRESA
         const email = `${slug}@agendezap.com`;
         const senha = '123';
-        
+
         console.log('👤 Criando usuário para empresa:', email);
-        
+
         const { data: usuario, error: erroUsuario } = await supabase
             .from('usuarios')
             .insert([{
@@ -417,7 +422,7 @@ app.post('/admin/companies', async (req: Request, res: Response) => {
 
 app.put('/admin/companies/:companyId', async (req: RequestWithCompanyId, res: Response) => {
     const { companyId } = req.params;
-    const { nome, descricao, whatsappNumber, active } = req.body;
+    const { nome, descricao, whatsappNumber, active, setupFee, monthlyFee, subscriptionStatus } = req.body;
 
     try {
         const atualizacoes: any = {};
@@ -425,6 +430,9 @@ app.put('/admin/companies/:companyId', async (req: RequestWithCompanyId, res: Re
         if (descricao) atualizacoes.descricao = descricao;
         if (whatsappNumber) atualizacoes.whatsapp_number = whatsappNumber;
         if (active !== undefined) atualizacoes.active = active;
+        if (setupFee !== undefined) atualizacoes.setup_fee = setupFee;
+        if (monthlyFee !== undefined) atualizacoes.monthly_fee = monthlyFee;
+        if (subscriptionStatus) atualizacoes.subscription_status = subscriptionStatus;
 
         const empresa = await db.atualizarEmpresa(companyId, atualizacoes);
 

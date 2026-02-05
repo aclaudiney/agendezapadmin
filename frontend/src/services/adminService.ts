@@ -26,12 +26,14 @@ export const adminService = {
   },
 
   // ✅ CRIAR NOVA EMPRESA
-  async criarEmpresa(nome: string, descricao?: string, whatsappNumber?: string) {
+  async criarEmpresa(nome: string, descricao?: string, whatsappNumber?: string, setupFee: number = 0, monthlyFee: number = 0) {
     try {
       const response = await axios.post(`${API_URL}/admin/companies`, {
         nome,
         descricao,
-        whatsappNumber
+        whatsappNumber,
+        setupFee,
+        monthlyFee
       });
       return response.data;
     } catch (error) {
@@ -91,6 +93,17 @@ export const adminService = {
       return response.data;
     } catch (error) {
       console.error('❌ Erro ao buscar status WhatsApp:', error);
+      throw error;
+    }
+  },
+
+  // ✅ GET ANALYTICS
+  async getSalesByCategory() {
+    try {
+      const response = await axios.get(`${API_URL}/api/admin/analytics/sales-by-category`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Erro ao buscar analytics:', error);
       throw error;
     }
   }
