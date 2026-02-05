@@ -7,13 +7,15 @@
  */
 
 import { ConversationContext } from '../types/conversation.js';
-import { 
-  validarDiaAberto, 
-  validarHorarioDisponivel,
+import {
+  validarDiaAberto,
   validarHorarioPassado,
-  buscarHorariosDisponiveis,
   determinarPeriodosDisponiveis
 } from './validationService.js';
+import {
+  validarHorarioDisponivel,
+  buscarHorariosDisponiveis
+} from './appointmentService.js';
 
 // ============================================
 // 1️⃣ TIPO DE RETORNO DA VALIDAÇÃO
@@ -50,28 +52,28 @@ export interface ResultadoValidacao {
 
 const filtrarPorPeriodo = (horarios: string[], periodo: string): string[] => {
   const periodoLower = periodo.toLowerCase();
-  
+
   if (periodoLower.includes('manhã') || periodoLower.includes('manha')) {
     return horarios.filter(h => {
       const hora = parseInt(h.split(':')[0]);
       return hora >= 6 && hora < 12;
     });
   }
-  
+
   if (periodoLower.includes('tarde')) {
     return horarios.filter(h => {
       const hora = parseInt(h.split(':')[0]);
       return hora >= 12 && hora < 18;
     });
   }
-  
+
   if (periodoLower.includes('noite')) {
     return horarios.filter(h => {
       const hora = parseInt(h.split(':')[0]);
       return hora >= 18 && hora < 23;
     });
   }
-  
+
   return horarios;
 };
 
@@ -85,7 +87,7 @@ const buscarHorariosProximos = (
   quantidade: number = 4
 ): string[] => {
   if (todosHorarios.length === 0) return [];
-  
+
   const [horaSol, minSol] = horarioSolicitado.split(':').map(Number);
   const minutosSolicitado = horaSol * 60 + minSol;
 
@@ -180,7 +182,7 @@ export const validarEEnriquecerContexto = async (
     // ✅ VALIDAÇÃO CRÍTICA 0: HORÁRIO NO PASSADO (ANTES DE TUDO!)
     if (dadosExtraidos.data && dadosExtraidos.hora) {
       console.log(`   ⏰ Verificando se horário já passou...`);
-      
+
       const horarioValidoTempo = validarHorarioPassado(
         dadosExtraidos.data,
         dadosExtraidos.hora,
@@ -193,41 +195,41 @@ export const validarEEnriquecerContexto = async (
         resultado.validacoes.horarioPassado = true;
         resultado.validacoes.horarioValido = false;
         resultado.validacoes.motivoErro = horarioValidoTempo.motivo;
-        
+
         // Buscar horários disponíveis FUTUROS
         if (dadosExtraidos.profissional) {
           const profissionalObj = contexto.profissionais.find(
             p => p.nome.toLowerCase() === dadosExtraidos.profissional.toLowerCase()
           );
-          
+
           if (profissionalObj) {
             const servicoObj = contexto.servicos.find(
               s => s.nome.toLowerCase() === (dadosExtraidos.servico || '').toLowerCase()
             );
             const duracaoServico = servicoObj?.duracao || 30;
-            
+
             const todosHorarios = await buscarHorariosDisponiveis(
               contexto.companyId,
               profissionalObj.id,
               dadosExtraidos.data,
               duracaoServico
             );
-            
+
             // Filtrar apenas horários FUTUROS (após hora atual + 1h)
-            const horaAtualMinutos = parseInt(contexto.horarioAtual.split(':')[0]) * 60 + 
-                                    parseInt(contexto.horarioAtual.split(':')[1]);
+            const horaAtualMinutos = parseInt(contexto.horarioAtual.split(':')[0]) * 60 +
+              parseInt(contexto.horarioAtual.split(':')[1]);
             const minutoMinimoFuturo = horaAtualMinutos + 60; // 1 hora de antecedência
-            
+
             const horariosFuturos = todosHorarios.filter(h => {
               const [hora, min] = h.split(':').map(Number);
               const minutos = hora * 60 + min;
               return minutos > minutoMinimoFuturo;
             });
-            
+
             resultado.validacoes.sugestoesHorarios = horariosFuturos.slice(0, 4);
           }
         }
-        
+
         return resultado;
       }
     }

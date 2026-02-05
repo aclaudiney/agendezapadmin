@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { 
-  AlertCircle, Share2, Copy, X, Clock, 
-  MapPin, Phone, Facebook, Instagram, 
+import {
+  AlertCircle, Share2, Copy, X, Clock,
+  MapPin, Phone, Facebook, Instagram,
   ChevronLeft, ChevronRight, Search, Plus, ChevronDown, ArrowLeft, CheckCircle, User, LogOut, Calendar
 } from 'lucide-react';
 
@@ -66,13 +66,13 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const obterDiaSemanaData = (dataStr: string): string => {
     const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
     const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-    
+
     const [year, month, day] = dataStr.split('-').map(Number);
     const date = new Date(year, month - 1, day);
-    
+
     const diaSemana = diasSemana[date.getDay()];
     const nomeMes = meses[date.getMonth()];
-    
+
     return `${diaSemana}, ${String(day).padStart(2, '0')} de ${nomeMes}`;
   };
 
@@ -155,7 +155,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         if (servicosRes.data) setServicos(servicosRes.data);
         if (profissionaisRes.data) setProfissionais(profissionaisRes.data);
         if (agendamentosRes.data) setAgendamentos(agendamentosRes.data);
-        
+
         setLoading(false);
       } catch (error) {
         console.error('Erro:', error);
@@ -191,22 +191,22 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       0: 'domingo', 1: 'segunda', 2: 'terca', 3: 'quarta',
       4: 'quinta', 5: 'sexta', 6: 'sabado'
     };
-    
+
     const dataAjustada = new Date(data.getTime() + data.getTimezoneOffset() * 60000);
     const diaName = diasMap[dataAjustada.getDay()];
-    const diasAberturaJSON = typeof config?.dias_abertura === 'string' 
-      ? JSON.parse(config.dias_abertura) 
+    const diasAberturaJSON = typeof config?.dias_abertura === 'string'
+      ? JSON.parse(config.dias_abertura)
       : config?.dias_abertura;
-    
+
     const aberto = diasAberturaJSON?.[diaName];
     const horarioKey = `horario_${diaName}`;
     const horario = config?.[horarioKey];
-    
+
     if (!aberto || !horario) return null;
-    
+
     const partes = horario.split('-');
     if (partes.length !== 2) return null;
-    
+
     const [inicio, fim] = partes;
     return { inicio: inicio.trim(), fim: fim.trim() };
   };
@@ -267,7 +267,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     if (!diaAtual) return;
 
     const todosHorarios = gerarTodosHorarios();
-    
+
     setPeriodosDisponiveis({
       manha: filtrarHorariosPorPeriodo(todosHorarios, 'manha').length > 0,
       tarde: filtrarHorariosPorPeriodo(todosHorarios, 'tarde').length > 0,
@@ -312,7 +312,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
     try {
       const telefoneLimpo = telefoneInput.replace(/\D/g, '');
-      
+
       if (telefoneLimpo.length < 10) {
         setErroMsg('Telefone inválido (mínimo 10 dígitos)');
         setLoadingVerificacao(false);
@@ -331,7 +331,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         // ✅ CLIENTE ENCONTRADO
         setClienteLogado(clientes[0]);
         localStorage.setItem('clienteLogado', JSON.stringify(clientes[0]));
-        
+
         // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
         // ✅ SE NÃO TEM, FECHA O MODAL (login feito com sucesso)
         if (servicosSelecionados.length > 0) {
@@ -387,7 +387,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       // ✅ CONTA CRIADA
       setClienteLogado(novoCliente);
       localStorage.setItem('clienteLogado', JSON.stringify(novoCliente));
-      
+
       // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
       // ✅ SE NÃO TEM, FECHA O MODAL (conta criada com sucesso)
       if (servicosSelecionados.length > 0) {
@@ -432,7 +432,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       // ✅ VALIDAR CADA SERVIÇO SELECIONADO CONTRA OS HORÁRIOS ATUALIZADOS
       for (const servico of servicosSelecionados) {
         const profissionalId = servico.profissional_id;
-        
+
         if (!profissionalId) {
           continue;
         }
@@ -442,9 +442,9 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         const fimReq = minutoReq + servico.duracao;
 
         const horarioOcupado = agendamentosAtualizados.some(ag => {
-          if (ag.profissional_id !== profissionalId || 
-              ag.data_agendamento !== servico.data_agendamento || 
-              ag.status === 'cancelado') {
+          if (ag.profissional_id !== profissionalId ||
+            ag.data_agendamento !== servico.data_agendamento ||
+            ag.status === 'cancelado') {
             return false;
           }
 
@@ -470,7 +470,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         profissional_id: s.profissional_id || null,
         data_agendamento: s.data_agendamento,
         hora_agendamento: s.hora_agendamento,
-        status: 'confirmado',
+        status: 'pendente',
         origem: 'web',
         company_id: companyId,
       }));
@@ -490,7 +490,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         .select('*')
         .eq('company_id', companyId)
         .neq('status', 'cancelado');
-      
+
       if (agendamentosNovos) {
         setAgendamentos(agendamentosNovos);
       }
@@ -543,22 +543,22 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
   const adicionarServico = (servico: Servico) => {
     setServicoEmEdicao(servico);
-    
+
     // ✅ PRÉ-SELECIONAR DATA DE HOJE
     const hoje = dateToString(new Date());
     setDiaAtual(hoje);
-    
+
     // ✅ PRÉ-SELECIONAR PROFISSIONAL SE TIVER SÓ 1
     if (profissionais.length === 1) {
       setProfissionalAtual(profissionais[0].id);
     } else {
       setProfissionalAtual('sem-preferencia');
     }
-    
+
     setHoraAtual('');
     setPeriodoAtual('manha');
     setShowBookingModal(true);
-    
+
     // ✅ SEMPRE ABRE EM 'servicos' (seleção)
     setModalStep('servicos');
     setErroMsg('');
@@ -621,7 +621,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   const fotos = config?.imagem_capa ? [config.imagem_capa] : [];
   const proximosDias = gerarProximosDias();
   const todosHorarios = gerarTodosHorarios();
-  
+
   const servicosPorCategoria = servicos.reduce((acc, servico) => {
     const categoria = servico.categoria || 'Outros Serviços';
     if (!acc[categoria]) acc[categoria] = [];
@@ -633,7 +633,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
     if (proximosDias.length === 0) return '';
     const primeiro = proximosDias[0];
     const ultimo = proximosDias[proximosDias.length - 1];
-    
+
     if (primeiro.getMonth() === ultimo.getMonth()) {
       return primeiro.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
     } else {
@@ -800,11 +800,11 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               4: 'quinta', 5: 'sexta', 6: 'sabado'
             };
             const diaHoje = diasMap[hoje.getDay()];
-            const diasAberturaJSON = typeof config?.dias_abertura === 'string' 
-              ? JSON.parse(config.dias_abertura) 
+            const diasAberturaJSON = typeof config?.dias_abertura === 'string'
+              ? JSON.parse(config.dias_abertura)
               : config?.dias_abertura;
             const abertoHoje = diasAberturaJSON?.[diaHoje];
-            
+
             return (
               <button
                 onClick={() => setExpandirHorarios(!expandirHorarios)}
@@ -815,7 +815,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
               </button>
             );
           })()}
-          
+
           {expandirHorarios && config?.dias_abertura && (
             <div className="space-y-2 text-sm">
               {['segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo'].map((dia) => {
@@ -823,14 +823,14 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                   segunda: 'Segunda-Feira', terca: 'Terça-Feira', quarta: 'Quarta-Feira', quinta: 'Quinta-Feira',
                   sexta: 'Sexta-Feira', sabado: 'Sábado', domingo: 'Domingo'
                 };
-                
-                const diasAberturaJSON = typeof config.dias_abertura === 'string' 
-                  ? JSON.parse(config.dias_abertura) 
+
+                const diasAberturaJSON = typeof config.dias_abertura === 'string'
+                  ? JSON.parse(config.dias_abertura)
                   : config.dias_abertura;
-                  
+
                 const aberto = diasAberturaJSON?.[dia];
                 const horario = config[`horario_${dia}`];
-                
+
                 return (
                   <div key={dia} className="flex justify-between text-slate-600">
                     <span className="font-medium">{diasNomes[dia]}</span>
@@ -879,7 +879,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       {showBookingModal && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4 bg-black/50">
           <div className="w-full md:max-w-4xl rounded-t-3xl md:rounded-3xl bg-white shadow-2xl max-h-[98vh] md:max-h-[95vh] overflow-y-auto flex flex-col">
-            
+
             {/* ===== STEP 1: SELEÇÃO (data, hora, profissional) ===== */}
             {modalStep === 'servicos' && servicoEmEdicao && (
               <>
@@ -904,7 +904,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                       <p>{erroMsg}</p>
                     </div>
                   )}
-                  
+
                   <div>
                     <h4 className="font-bold text-slate-900 mb-4 text-lg">Selecione a Data</h4>
                     <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 mb-6">
@@ -920,20 +920,18 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                             key={diaStr}
                             onClick={() => !isClosed && setDiaAtual(diaStr)}
                             disabled={isClosed}
-                            className={`flex flex-col items-center justify-center min-w-[90px] p-3 rounded-xl font-bold transition-all flex-shrink-0 ${
-                              isClosed
+                            className={`flex flex-col items-center justify-center min-w-[90px] p-3 rounded-xl font-bold transition-all flex-shrink-0 ${isClosed
                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                                 : isSelected
-                                ? 'bg-cyan-600 text-white shadow-lg'
-                                : 'bg-white border-2 border-slate-200 text-slate-900 hover:border-cyan-400'
-                            }`}
+                                  ? 'bg-cyan-600 text-white shadow-lg'
+                                  : 'bg-white border-2 border-slate-200 text-slate-900 hover:border-cyan-400'
+                              }`}
                           >
                             <span className="text-xs mb-1">{diasNomes[dia.getDay()]}</span>
                             <span className="text-xl">{dia.getDate()}</span>
-                            <div className={`mt-2 w-2 h-2 rounded-full ${
-                              isClosed ? 'bg-slate-400' :
-                              isSelected ? 'bg-white' : 'bg-green-500'
-                            }`}></div>
+                            <div className={`mt-2 w-2 h-2 rounded-full ${isClosed ? 'bg-slate-400' :
+                                isSelected ? 'bg-white' : 'bg-green-500'
+                              }`}></div>
                           </button>
                         );
                       })}
@@ -960,13 +958,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                               }
                             }}
                             disabled={!disponivel}
-                            className={`py-2 rounded-lg font-bold text-sm transition-all ${
-                              disponivel
+                            className={`py-2 rounded-lg font-bold text-sm transition-all ${disponivel
                                 ? periodoAtual === p
                                   ? 'bg-cyan-600 text-white'
                                   : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
                                 : 'bg-slate-50 text-slate-400 cursor-not-allowed'
-                            }`}
+                              }`}
                           >
                             {periodo}
                           </button>
@@ -998,11 +995,10 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
                                   const periodoDoHorario = detectarPeriodoDoHorario(hora);
                                   setPeriodoAtual(periodoDoHorario);
                                 }}
-                                className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${
-                                  horaAtual === hora
+                                className={`min-w-[70px] py-2 rounded-lg font-bold text-sm transition-all flex-shrink-0 ${horaAtual === hora
                                     ? 'bg-cyan-600 text-white shadow-lg'
                                     : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                                }`}
+                                  }`}
                               >
                                 {hora}
                               </button>

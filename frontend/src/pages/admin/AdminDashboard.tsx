@@ -51,10 +51,8 @@ const AdminDashboard: React.FC = () => {
 
   const carregarAnalytics = async () => {
     try {
-      const response = await adminService.getSalesByCategory();
-      if (response.success) {
-        setChartData(response.data);
-      }
+      const data = await adminService.getSalesByCategory();
+      setChartData(data);
     } catch (error) {
       console.error('Erro ao carregar analytics:', error);
     }
@@ -96,9 +94,9 @@ const AdminDashboard: React.FC = () => {
       await adminService.desativarEmpresa(companyId);
       setErro('');
       await carregarEmpresas();
-    } catch (error) {
-      setErro('Erro ao deletar empresa');
-      console.error(error);
+    } catch (error: any) {
+      setErro(`Erro ao deletar empresa: ${error.message || 'Verifique se existem agendamentos ou outros registros vinculados'}`);
+      console.error('❌ Erro completo ao deletar:', error);
     }
   };
 

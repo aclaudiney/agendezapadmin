@@ -6,16 +6,11 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { MessageSquare, User, Clock, TrendingUp, Download, Send } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
+import { MessageSquare, User, Clock, TrendingUp, Download, Send, Loader, AlertTriangle } from 'lucide-react';
+import { adminService } from '../../services/adminService';
 
+// ✅ API URL para envio de mensagens (Backend)
 const API_URL = import.meta.env.VITE_API_URL;
-
-// ✅ SUPABASE CLIENT
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
 
 interface Company {
   id: string;
@@ -67,37 +62,20 @@ export default function AdminCRMPage() {
 
   const loadCompanies = async () => {
     try {
-      console.log('📊 [CRM] Buscando empresas do Supabase...');
-      
-      const { data, error } = await supabase
-        .from('companies')
-        .select('id, name, active')
-        .eq('active', true)
-        .order('name');
-
-      if (error) {
-        console.error('❌ Erro ao buscar empresas:', error);
-        return;
-      }
-
-      console.log('✅ Empresas carregadas:', data?.length);
-      setCompanies(data || []);
+      const res = await adminService.listarEmpresas();
+      setCompanies(res.companies || []);
     } catch (error) {
-      console.error('❌ Erro ao carregar empresas:', error);
+      console.error('Erro ao carregar empresas:', error);
     }
   };
 
   const loadConversations = async () => {
+    if (!selectedCompanyId) return;
     setLoading(true);
     try {
-      console.log('📊 [CRM] Buscando conversas...');
-      
-      const res = await axios.get(`${API_URL}/api/crm/conversations/${selectedCompanyId}`);
-      
-      console.log('✅ [CRM] Conversas:', res.data.data?.length || 0);
-      setConversations(res.data.data || []);
-    } catch (error: any) {
-      console.error('❌ [CRM] Erro ao carregar conversas:', error);
+      const data = await adminService.buscarConversasCRM(selectedCompanyId);
+      setConversations(data || []);
+    } catch (error) {
       setConversations([]);
     } finally {
       setLoading(false);
@@ -105,16 +83,12 @@ export default function AdminCRMPage() {
   };
 
   const loadMessages = async () => {
+    if (!selectedCompanyId || !selectedPhone) return;
     setLoading(true);
     try {
-      console.log('📊 [CRM] Buscando mensagens...');
-      
-      const res = await axios.get(`${API_URL}/api/crm/messages/${selectedCompanyId}/${selectedPhone}`);
-      
-      console.log('✅ [CRM] Mensagens:', res.data.data?.length || 0);
-      setMessages(res.data.data || []);
-    } catch (error: any) {
-      console.error('❌ [CRM] Erro ao carregar mensagens:', error);
+      const data = await adminService.buscarMensagensCRM(selectedCompanyId, selectedPhone);
+      setMessages(data || []);
+    } catch (error) {
       setMessages([]);
     } finally {
       setLoading(false);
@@ -122,9 +96,10 @@ export default function AdminCRMPage() {
   };
 
   const loadStats = async () => {
+    if (!selectedCompanyId) return;
     try {
-      const res = await axios.get(`${API_URL}/api/crm/stats/${selectedCompanyId}`);
-      setStats(res.data.data);
+      const data = await adminService.buscarEstatisticasCRM(selectedCompanyId);
+      setStats(data);
     } catch (error) {
       console.error('❌ [CRM] Erro ao carregar estatísticas:', error);
     }
@@ -160,16 +135,16 @@ export default function AdminCRMPage() {
     setSending(true);
     try {
       console.log('📤 [CRM] Enviando mensagem...');
-      
-      const res = await axios.post(`${API_URL}/api/crm/send-message`, {
-        companyId: selectedCompanyId,
-        clientPhone: selectedPhone,
-        message: newMessage
-      });
 
-      if (res.data.success) {
+      const res = await adminService.enviarMensagemCRM(
+        selectedCompanyId,
+        selectedPhone,
+        newMessage
+      );
+
+      if (res.success) {
         console.log('✅ [CRM] Mensagem enviada!');
-        
+
         // Adicionar mensagem localmente
         const novaMensagem: Message = {
           id: `temp-${Date.now()}`,
@@ -180,10 +155,10 @@ export default function AdminCRMPage() {
           extracted_data: null,
           conversation_type: 'manual_crm'
         };
-        
+
         setMessages([...messages, novaMensagem]);
         setNewMessage('');
-        
+
         // Recarregar mensagens após 1 segundo
         setTimeout(() => {
           loadMessages();
@@ -192,7 +167,13 @@ export default function AdminCRMPage() {
       }
     } catch (error: any) {
       console.error('❌ [CRM] Erro ao enviar:', error);
-      alert(error.response?.data?.error || 'Erro ao enviar mensagem');
+      const isConnectionError = error.code === 'ERR_NETWORK' || error.message?.includes('Network Error') || error.message?.includes('refused');
+
+      if (isConnectionError) {
+        alert('⚠️ ROBÔ OFFLINE: O servidor de mensagens não está respondendo. As mensagens só podem ser enviadas quando o backend estiver ativo.');
+      } else {
+        alert(error.response?.data?.error || 'Erro ao enviar mensagem');
+      }
     } finally {
       setSending(false);
     }
@@ -246,7 +227,7 @@ export default function AdminCRMPage() {
             </option>
           ))}
         </select>
-        
+
         {companies.length === 0 && (
           <p className="mt-2 text-sm text-gray-500">
             Nenhuma empresa encontrada
@@ -318,11 +299,10 @@ export default function AdminCRMPage() {
                 ) : (
                   conversations.map((conv) => (
                     <button
-                      key={conv.client_phone}
+                      key={`${selectedCompanyId}-${conv.client_phone}`}
                       onClick={() => setSelectedPhone(conv.client_phone)}
-                      className={`w-full text-left p-4 hover:bg-gray-50 transition ${
-                        selectedPhone === conv.client_phone ? 'bg-blue-50' : ''
-                      }`}
+                      className={`w-full text-left p-4 hover:bg-gray-50 transition ${selectedPhone === conv.client_phone ? 'bg-blue-50' : ''
+                        }`}
                     >
                       <div className="flex items-start space-x-3">
                         <div className="flex-shrink-0">
@@ -346,7 +326,7 @@ export default function AdminCRMPage() {
                             {new Date(conv.last_message_at).toLocaleDateString('pt-BR')}
                           </p>
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mt-1">
-                            {conv.message_count}
+                            {conv.message_count || 0}
                           </span>
                         </div>
                       </div>
@@ -377,13 +357,17 @@ export default function AdminCRMPage() {
                     </button>
                   </div>
 
-                  {/* Mensagens */}
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
                     {loading ? (
-                      <div className="text-center text-gray-500 py-8">Carregando...</div>
+                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                        <Loader className="h-8 w-8 animate-spin mb-2" />
+                        <p>Carregando mensagens...</p>
+                      </div>
                     ) : messages.length === 0 ? (
-                      <div className="text-center text-gray-500 py-8">
-                        Nenhuma mensagem encontrada
+                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                        <MessageSquare className="h-12 w-12 opacity-20 mb-2" />
+                        <p>Nenhuma mensagem encontrada nesta conversa.</p>
+                        <p className="text-xs mt-1">Verifique as políticas de RLS se os dados existem no banco.</p>
                       </div>
                     ) : (
                       messages.map((msg) => (
@@ -392,11 +376,10 @@ export default function AdminCRMPage() {
                           className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                         >
                           <div
-                            className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                              msg.direction === 'outgoing'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-200 text-gray-900'
-                            }`}
+                            className={`max-w-[70%] rounded-lg px-4 py-2 ${msg.direction === 'outgoing'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-200 text-gray-900'
+                              }`}
                           >
                             <p className="text-sm whitespace-pre-wrap">{msg.message_text}</p>
                             <div className="flex items-center justify-between mt-1 space-x-2">
@@ -440,11 +423,10 @@ export default function AdminCRMPage() {
                       <button
                         onClick={enviarMensagem}
                         disabled={sending || !newMessage.trim()}
-                        className={`flex items-center gap-2 px-6 py-2 rounded-lg font-medium transition-colors h-[60px] ${
-                          sending || !newMessage.trim()
-                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }`}
+                        className={`flex items-center gap-2 px-6 py-2 rounded-lg font-medium transition-colors h-[60px] ${sending || !newMessage.trim()
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
                       >
                         <Send className="h-5 w-5" />
                         <span>{sending ? 'Enviando...' : 'Enviar'}</span>

@@ -314,7 +314,7 @@ export const db = {
                 .insert([{
                     ...agendamento,
                     company_id: companyId, // ✅ MULTI-TENANT
-                    status: agendamento.status || 'confirmado',
+                    status: agendamento.status || 'pendente',
                     created_at: new Date()
                 }])
                 .select()

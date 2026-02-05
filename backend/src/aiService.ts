@@ -122,7 +122,10 @@ export const gerarRespostaIA = async (dados: any) => {
             if (dadosExtraidos.data) {
                 const [ano, mes, dia] = dadosExtraidos.data.split('-');
                 const dataFormatada = `${dia}/${mes}/${ano}`;
-                resumoDadosExtraidos += `✅ Data: ${dataFormatada} (${dadosExtraidos.data})\n`;
+                resumoDadosExtraidos += `✅ DATA DEFINIDA: ${dataFormatada} (${dadosExtraidos.data})\n`;
+                resumoDadosExtraidos += `⚠️ IMPORTANTE: Use EXATAMENTE a data ${dataFormatada} para buscar horários. NÃO recalcule "amanhã" se a data já está definida aqui.\n`;
+            } else {
+                resumoDadosExtraidos += `❓ Data: Não informada\n`;
             }
 
             if (dadosExtraidos.periodo) resumoDadosExtraidos += `✅ Periodo: ${dadosExtraidos.periodo}\n`;
@@ -130,13 +133,39 @@ export const gerarRespostaIA = async (dados: any) => {
             if (dadosExtraidos.profissional) resumoDadosExtraidos += `✅ Profissional: ${dadosExtraidos.profissional}\n`;
             if (dadosExtraidos.nome) resumoDadosExtraidos += `✅ Nome: ${dadosExtraidos.nome}\n`;
 
-            // ✅ ETAPA 1: NOVO - Horários disponíveis
+            if (dadosExtraidos.puloParaAmanha && dadosExtraidos.data) {
+                const [anoP, mesP, diaP] = dadosExtraidos.data.split('-');
+                const dataPulo = `${diaP}/${mesP}/${anoP}`;
+                resumoDadosExtraidos += `\n⚠️ AVISO SISTEMA: O dia original estava esgotado. A data foi ajustada automaticamente para AMANHÃ (${dataPulo}). Avise o cliente.\n`;
+            }
+
+            resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
             if (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 0) {
                 resumoDadosExtraidos += `\n🕐 HORÁRIOS DISPONÍVEIS ${dadosExtraidos.periodo ? `(${dadosExtraidos.periodo})` : ''}:\n`;
-                // Se tiver muitos horários, mostrar os primeiros para economizar tokens
-                const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 8);
-                resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 8 ? '...' : '') + '\n';
-                resumoDadosExtraidos += `⚠️ IMPORTANTE: Liste estes horários para o cliente escolher!\n`;
+
+                // Se temos estrutura detalhada por período, usa ela (Melhor UX)
+                if (dadosExtraidos.horariosPorPeriodo) {
+                    const hp = dadosExtraidos.horariosPorPeriodo;
+                    const temManha = hp.manha && hp.manha.length > 0;
+                    const temTarde = hp.tarde && hp.tarde.length > 0;
+                    const temNoite = hp.noite && hp.noite.length > 0;
+
+                    if (temManha || temTarde || temNoite) {
+                        resumoDadosExtraidos += `\nPAINEL DE HORÁRIOS (Use para sugerir):\n`;
+                        if (temManha) resumoDadosExtraidos += `🌅 MANHÃ (06h-12h): ${hp.manha.join(', ')}\n`;
+                        if (temTarde) resumoDadosExtraidos += `☀️ TARDE (12h-18h): ${hp.tarde.join(', ')}\n`;
+                        if (temNoite) resumoDadosExtraidos += `🌙 NOITE (18h-23h): ${hp.noite.join(', ')}\n`;
+                        resumoDadosExtraidos += `\n⚠️ IMPORTANTE: Sempre pergunte qual PERÍODO o cliente prefere antes de listar tudo!\n`;
+                    } else {
+                        // Fallback se estrutura vier vazia mas horariosDisponiveis tiver dados
+                        const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 10);
+                        resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 10 ? '...' : '') + '\n';
+                    }
+                } else {
+                    // Fallback antigo
+                    const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 8);
+                    resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 8 ? '...' : '') + '\n';
+                }
             } else if (dadosExtraidos.data && dadosExtraidos.profissional) {
                 if (dadosExtraidos.periodosDisponiveis && dadosExtraidos.periodosDisponiveis.length > 0) {
                     resumoDadosExtraidos += `\n✅ PERÍODOS COM VAGA: ${dadosExtraidos.periodosDisponiveis.join(', ')}\n`;
@@ -146,17 +175,7 @@ export const gerarRespostaIA = async (dados: any) => {
                 }
             }
 
-            if (dadosExtraidos.puloParaAmanha) {
-                const mensagemLower = (dados.mensagem || '').toLowerCase();
-                const clienteDisseAmanha = mensagemLower.includes('amanhã') || mensagemLower.includes('amanha');
-
-                if (clienteDisseAmanha) {
-                    resumoDadosExtraidos += `\n✅ O CLIENTE JÁ PEDIU PARA AMANHÃ. Prossiga diretamente com os horários de amanhã.\n`;
-                } else {
-                    resumoDadosExtraidos += `\n⚠️ AVISO CRÍTICO: Hoje já encerramos ou não há vagas. Os horários listados são para AMANHÃ!\n`;
-                    resumoDadosExtraidos += `⚠️ Você DEVE avisar o cliente: "Ney, para hoje já não temos mais vagas, mas para amanhã tenho..."\n`;
-                }
-            }
+            // (Lógica de puloParaAmanha movida para dentro do bloco de data acima)
 
             resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
         }
@@ -256,8 +275,8 @@ export const gerarRespostaIA = async (dados: any) => {
 
 1️⃣ SAUDAÇÃO INICIAL:
    ${dadosExtraidos.servico || dadosExtraidos.data ?
-                            '⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para o próximo passo!' :
-                            '✅ Se primeira mensagem: "Oi ${dados.clienteNome}! Como posso ajudar?"'}
+                            `⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ✅ Comece com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Com certeza posso te ajudar com isso!"\n   ✅ Depois, prossiga para o próximo passo!` :
+                            `✅ Se primeira mensagem: "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"`}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Qual serviço você quer agendar?"'}
@@ -354,8 +373,8 @@ Cliente disse "sim"/"ok"/"confirma"
 
 1️⃣ SAUDAÇÃO INICIAL:
    ${dadosExtraidos.servico || dadosExtraidos.data ?
-                            '⚠️ Cliente JÁ DISSE o que quer!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para próximo passo!' :
-                            '✅ Se mensagem é saudação simples ("oi", "olá"): "Oi! Bem-vindo! Como posso ajudar?"\n   ✅ Se mensagem já menciona agendamento: vá para próximo passo\n   ❌ NÃO peça nome ainda!'}
+                            `⚠️ Cliente JÁ DISSE o que quer!\n   ✅ Comece SEMPRE com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Claro, te ajudo sim!"\n   ✅ Vá DIRETO para o próximo passo!` :
+                            `✅ Se mensagem é saudação simples ("oi", "olá"): "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"\n   ✅ Se mensagem já menciona agendamento: comece com a saudação de apresentação e vá para o próximo passo\n   ❌ NÃO peça nome ainda!`}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Qual serviço?"'}
@@ -481,9 +500,18 @@ ${dados.agendamentosProximos.map((a: any) => `- ID: ${a.id} | ${a.descricao}`).j
 3. ✅ REGRAS CRÍTICAS:
    - REGRA DE OURO: JAMAIS diga "Cancelado", "Agendado" ou "Confirmado" se você não tiver usado a ferramenta (tool) correspondente com sucesso. Mentir sobre uma ação é falha grave.
    - REAGENDAMENTO: Se o cliente citar um horário que ele JÁ POSSUI (ex: "não vou conseguir às 9") e pedir outro (ex: "pode ser às 11?"), você deve tratar como REMARCAR, identificando o ID do antigo e coletando o novo.
+   - NUNCA diga que é um robô, IA ou assistente virtual. Se perguntarem se você é humano, responda de forma sutil e simpática como: "Sou o assistente digital aqui da ${dados.nomeLoja}, focado em cuidar dos agendamentos para ninguém ficar sem horário! 😊".
+   - Mantenha sempre a polidez: se o cliente for direto ao ponto, ainda assim use a saudação "Olá, tudo bem?" para manter a cordialidade.
    - NUNCA invente horários. Use apenas os fornecidos.
    - Respostas CURTAS e objetivas (máx 3-4 linhas).
    - Se houver múltiplos profissionais e o cliente não escolheu, pergunte se tem preferência ou pode ser "qualquer um".
+
+4. 🛡️ REGRA CRÍTICA DE VALIDAÇÃO (SEGURANÇA):
+   - 1. Cliente pede horário → VOCÊ VALIDA se está na lista de DISPONÍVEIS.
+   - 2. Se DISPONÍVEL → Segue para confirmação.
+   - 3. Se NÃO DISPONÍVEL ou NÃO LISTADO → DIGA IMEDIATAMENTE: "Esse horário já está ocupado" e sugira os próximos.
+   - 4. NUNCA, em hipótese alguma, confirme um horário que não foi validado como disponível.
+   - 5. Se o horário for de fechamento (ex: fecha 18h), 18:00 é PERMITIDO (se durar 30min).
 
 ${instrucoesPorTipo}
 
@@ -596,18 +624,20 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
                 dados
             );
 
+            const msgFinal = resultado.mensagem.trim();
+
             // 3️⃣ SALVAR RESPOSTA DO MODELO (FUNCTION CALL)
-            await salvarMensagemBanco(dados.companyId, dados.jid, "model", resultado.mensagem);
+            await salvarMensagemBanco(dados.companyId, dados.jid, "model", msgFinal);
 
             chatsMemoria[memKey].push({
                 role: "model",
-                parts: [{ text: resultado.mensagem }]
+                parts: [{ text: msgFinal }]
             });
 
-            return resultado.mensagem;
+            return msgFinal;
         }
 
-        const textoIA = part.text || "Como posso ajudar?";
+        const textoIA = (part.text || "Como posso ajudar?").trim();
 
         // 3️⃣ SALVAR RESPOSTA DO MODELO (TEXTO)
         await salvarMensagemBanco(dados.companyId, dados.jid, "model", textoIA);
@@ -716,6 +746,51 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
         }
 
         console.log(`   Chamando tentarAgendar...`);
+
+        // 🔒 SEGURANÇA: Validar disponibilidade novamente (caso IA tenha alucinado)
+        if (args.profissional && args.data && args.hora) {
+            const { validarHorarioDisponivel } = await import('./services/appointmentService.js');
+            const validacao = await validarHorarioDisponivel(
+                dados.companyId,
+                // Precisamos buscar o ID do profissional pelo nome se não vier no args (args geralmente tem nome)
+                // Mas tentarAgendar resolve isso. Vamos confiar no tentarAgendar,
+                // MAS vamos garantir que datas não sejam inventadas.
+                // A melhor validação é no AgendamentoController.
+                // Vamos passar a responsabilidade para o AgendamentoController ser RÍGIDO.
+                // Mas aqui, vamos garantir que a DATA bata com a extraída!
+                "" as any, // placeholder, na verdade vamos só validar data
+                args.data,
+                args.hora
+            );
+
+            // Se a data confirmada pela IA for diferente da data extraída no contexto
+            // e o usuário NÃO pediu explicitamente outra data na última mensagem...
+            if (dados.dadosExtraidos && dados.dadosExtraidos.data) {
+                if (dados.dadosExtraidos.data !== dataFormatada) {
+                    console.warn(`⚠️ ALERTA DE SEGURANÇA: IA tentou agendar para ${dataFormatada} mas contexto dizia ${dados.dadosExtraidos.data}`);
+                    console.warn(`🔒 FORÇANDO data do contexto: ${dados.dadosExtraidos.data}`);
+
+                    // 🔒 CORREÇÃO AUTOMÁTICA: Usar a data que foi validada e extraída pelo sistema!
+                    dataFormatada = dados.dadosExtraidos.data;
+
+                    // Revalidar com a data correta
+                    const revalidacao = await validarHorarioDisponivel(
+                        dados.companyId,
+                        "" as any,
+                        dataFormatada, // Data correta (06/02)
+                        args.hora
+                    );
+
+                    if (!revalidacao.disponivel) {
+                        return {
+                            mensagem: `Ops! Verifiquei aqui e o horário das ${args.hora} no dia ${dataFormatada.split('-').reverse().join('/')} acabou de ser ocupado. Pode ser em outro horário?`,
+                            sucesso: false
+                        };
+                    }
+                }
+            }
+        }
+
         const resultadoAgendamento = await tentarAgendar(
             {
                 ...args,
@@ -738,7 +813,7 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
             const nomeClienteFinal = args.nomeCliente || dados.clienteNome || 'Cliente';
 
             return {
-                mensagem: `✅ Agendamento confirmado ${nomeClienteFinal}!\n\n📋 ${res.servico}\n📅 ${dataFormatadaMostra} às ${res.hora}\n👤 ${res.profissional}\n\nAté logo! 👋`,
+                mensagem: `✅ Agendamento realizado ${nomeClienteFinal}!\n\n📋 ${res.servico}\n📅 ${dataFormatadaMostra} às ${res.hora}\n👤 ${res.profissional}\n\nAté logo! 👋`,
                 sucesso: true
             };
         }

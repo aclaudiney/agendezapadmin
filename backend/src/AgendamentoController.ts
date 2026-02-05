@@ -4,9 +4,9 @@
  */
 
 import { db, supabase } from "./supabase.js";
-import { criarAgendamento, buscarHorariosDisponiveis } from "./services/appointmentService.js";
+import { criarAgendamento, buscarHorariosDisponiveis, validarHorarioDisponivel as validarHorarioDisponivel2 } from "./services/appointmentService.js";
 import { criarNovoCliente } from "./services/clientService.js";
-import { validarHorarioDisponivel, validarDiaAberto, validarDataFutura } from "./services/validationService.js";
+import { validarDiaAberto, validarDataFutura } from "./services/validationService.js";
 import { CriarAgendamentoInput } from "./types/agendamento.js";
 
 // ============================================
@@ -83,7 +83,7 @@ export const tentarAgendar = async (
 
     // --- VALIDAR HORÁRIO DISPONÍVEL ---
     const duracao = srv?.duracao || 30;
-    const horarioDisponivel = await validarHorarioDisponivel(
+    const horarioDisponivel = await validarHorarioDisponivel2(
       companyId,
       prf.id,
       dataFormatada,

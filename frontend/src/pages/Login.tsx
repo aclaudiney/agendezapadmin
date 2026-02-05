@@ -47,33 +47,23 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      // ✅ SE FOR EMPRESA, VERIFICAR SE ESTÁ ATIVA
+      // ✅ SE FOR EMPRESA, VERIFICAR SE ESTÁ ATIVA (DIRETO NO SUPABASE)
       if (data.role === 'empresa') {
-        console.log('🔍 Verificando se empresa está ativa...');
-        
-        try {
-          const resposta = await axios.get(
-            `${API_URL}/verify-company/${data.company_id}`
-          );
+        console.log('🔍 Verificando se empresa está ativa no Supabase...');
 
-          if (!resposta.data.ativa) {
-            console.error('❌ Empresa foi bloqueada');
-            setErro('🚫 Sua empresa foi desativada pelo administrador');
-            return;
-          }
+        const { data: empresa, error: erroEmpresa } = await supabase
+          .from('companies')
+          .select('active')
+          .eq('id', data.company_id)
+          .single();
 
-          console.log('✅ Empresa está ativa!');
-        } catch (error: any) {
-          if (error.response?.status === 403) {
-            console.error('❌ Empresa bloqueada pelo Super Admin');
-            setErro('🚫 Sua empresa foi desativada pelo administrador');
-            return;
-          } else {
-            console.error('❌ Erro ao verificar empresa:', error);
-            setErro('Erro ao verificar status da empresa. Tente novamente.');
-            return;
-          }
+        if (erroEmpresa || !empresa?.active) {
+          console.error('❌ Empresa bloqueada ou não encontrada:', erroEmpresa);
+          setErro('🚫 Sua empresa foi desativada pelo administrador');
+          return;
         }
+
+        console.log('✅ Empresa está ativa!');
       }
 
       // ✅ Salvar dados do usuário no localStorage

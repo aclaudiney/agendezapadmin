@@ -39,7 +39,7 @@ const buscarHorariosDisponiveis = async (
   data: string,
   profissionais: any[], // ✅ ADICIONADO
   periodo?: string
-): Promise<string[]> => {
+): Promise<{ horarios: string[], periodosEstruturados?: any }> => {
   try {
     console.log(`\n🕐 [HORÁRIOS] Buscando disponibilidade...`);
     console.log(`   Company: ${companyId}`);
@@ -47,147 +47,51 @@ const buscarHorariosDisponiveis = async (
     console.log(`   Data: ${data}`);
     console.log(`   Período: ${periodo || 'todos'}`);
 
-    // ✅ CORREÇÃO: Adicionando a query que estava faltando
-    // 1️⃣ BUSCAR HORÁRIO DE FUNCIONAMENTO DA EMPRESA (✅ TABELA CORRETA!)
-    const { data: config, error: configError } = await supabase
-      .from('configuracoes')
-      .select('*')
-      .eq('company_id', companyId)
-      .maybeSingle();
+    // Importar nova função
+    const { buscarHorariosLivresPorProfissional } = await import('./appointmentService.js');
 
-    if (configError || !config) {
-      console.log(`   ❌ Erro ao buscar config: ${configError?.message || 'Config não encontrada'}`);
-      return [];
+    // Buscar profissional
+    const profissional = profissionais.find((p: any) =>
+      p.nome.toLowerCase().includes(profissionalNome.toLowerCase())
+    );
+
+    if (!profissional) {
+      console.log(`   ❌ Profissional não encontrado: ${profissionalNome}`);
+      return { horarios: [] };
     }
 
-    // Determinar dia da semana
-    const dataObj = new Date(data + 'T00:00:00');
-    const diasSemana = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-    const diaSemana = diasSemana[dataObj.getDay()];
+    // Buscar horários com a nova função (já filtra passados e separa por período)
+    const resultado = await buscarHorariosLivresPorProfissional(
+      companyId,
+      profissional.id,
+      data,
+      30 // duração padrão
+    );
 
-    console.log(`   📅 Dia da semana: ${diaSemana}`);
-
-    // Buscar horários do dia (horario_segunda, horario_terca, etc)
-    const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-    const horarioDoDia = config[`horario_${nomesDiaIngles[dataObj.getDay()]}`];
-
-    if (!horarioDoDia || horarioDoDia === 'FECHADO' || !horarioDoDia.includes('-')) {
-      console.log(`   ❌ Empresa fechada ou configuração inválida nesta data: ${data}`);
-      return [];
+    // Filtrar por período se especificado
+    let horariosRetorno: string[] = [];
+    if (periodo === 'manhã') {
+      horariosRetorno = resultado.periodos.manha;
+    } else if (periodo === 'tarde') {
+      horariosRetorno = resultado.periodos.tarde;
+    } else if (periodo === 'noite') {
+      horariosRetorno = resultado.periodos.noite;
+    } else {
+      horariosRetorno = resultado.horarios; // Todos os horários
     }
 
-    const [inicio, fim] = horarioDoDia.split('-');
-    console.log(`   ⏰ Horário funcionamento: ${inicio} - ${fim}`);
-
-    // 2️⃣ GERAR TODOS OS HORÁRIOS POSSÍVEIS (30 em 30 min)
-    const todosHorarios: string[] = [];
-    let [horaInicio, minInicio] = inicio.split(':').map(Number);
-    const [horaFim, minFim] = fim.split(':').map(Number);
-
-    let horaAtual = horaInicio;
-    let minAtual = minInicio;
-
-    while (horaAtual < horaFim || (horaAtual === horaFim && minAtual < minFim)) {
-      const horaStr = String(horaAtual).padStart(2, '0');
-      const minStr = String(minAtual).padStart(2, '0');
-      todosHorarios.push(`${horaStr}:${minStr}`);
-
-      minAtual += 30;
-      if (minAtual >= 60) {
-        minAtual = 0;
-        horaAtual++;
-      }
-    }
-
-    console.log(`   ✅ Horários base gerados: ${todosHorarios.length}`);
-
-    // 3️⃣ FILTRAR POR PERÍODO (se fornecido)
-    let horariosFiltrados = todosHorarios;
-
-    if (periodo) {
-      horariosFiltrados = todosHorarios.filter(h => {
-        const [hora] = h.split(':').map(Number);
-
-        if (periodo === 'manhã') return hora >= 6 && hora < 12;
-        if (periodo === 'tarde') return hora >= 12 && hora < 18;
-        if (periodo === 'noite') return hora >= 18 && hora <= 23;
-
-        return true;
-      });
-
-      console.log(`   🕐 Filtrado por ${periodo}: ${horariosFiltrados.length} horários`);
-    }
-
-    // 4️⃣ SE FOR HOJE, FILTRAR HORÁRIOS QUE JÁ PASSARAM (Ajustado TZ)
-    const agora = new Date();
-    const [diaT, mesT, anoT] = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(agora).split('/');
-    const hoje = `${anoT}-${mesT}-${diaT}`;
-
-    if (data === hoje) {
-      const { hour: horaAtualNum, minute: minAtualNum } = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(agora).reduce((acc: any, part) => {
-        if (part.type === 'hour') acc.hour = parseInt(part.value);
-        if (part.type === 'minute') acc.minute = parseInt(part.value);
-        return acc;
-      }, { hour: 0, minute: 0 });
-
-      horariosFiltrados = horariosFiltrados.filter(h => {
-        const [hora, min] = h.split(':').map(Number);
-
-        // Só incluir se for pelo menos 1h depois da hora atual
-        if (hora > horaAtualNum + 1) return true;
-        if (hora === horaAtualNum + 1 && min >= minAtualNum) return true;
-
-        return false;
-      });
-
-      console.log(`   ⏰ Filtrado por hora atual (${horaAtualNum}:${minAtualNum}): ${horariosFiltrados.length} horários`);
-    }
-
-    // 5️⃣ BUSCAR AGENDAMENTOS JÁ EXISTENTES
-    // ✅ CORREÇÃO: Usar PROFISSIONAL_ID e nomes reais das colunas
-    const profissionalObj = profissionais.find(p => p.nome.toLowerCase() === profissionalNome.toLowerCase());
-
-    if (!profissionalObj) {
-      console.log(`   ⚠️ Profissional ${profissionalNome} não encontrado para busca de agendamentos.`);
-      return horariosFiltrados;
-    }
-
-    const { data: agendamentos, error: agendError } = await supabase
-      .from('agendamentos')
-      .select('hora_agendamento')
-      .eq('company_id', companyId)
-      .eq('data_agendamento', data)
-      .eq('profissional_id', profissionalObj.id)
-      .in('status', ['confirmado', 'pendente']);
-
-    if (agendError) {
-      console.log(`   ⚠️ Erro ao buscar agendamentos: ${agendError.message}`);
-    }
-
-    // ✅ CORREÇÃO: Formatar horários ocupados para HH:MM (removendo segundos se houver)
-    // E arredondar para baixo para bloquear o slot da grade (ex: 17:01 vira 17:00)
-    const horariosOcupados = (agendamentos || []).map((a: any) => {
-      if (typeof a.hora_agendamento !== 'string') return a.hora_agendamento;
-      const [h, m] = a.hora_agendamento.split(':').map(Number);
-      // Arredonda para o múltiplo de 30 anterior (grid)
-      const mArredondado = m >= 30 ? 30 : 0;
-      return `${String(h).padStart(2, '0')}:${String(mArredondado).padStart(2, '0')}`;
-    });
-    console.log(`   📌 Horários ocupados (arredondados): ${horariosOcupados.join(', ')}`);
-
-    // 6️⃣ FILTRAR HORÁRIOS OCUPADOS
-    const horariosLivres = horariosFiltrados.filter(h => !horariosOcupados.includes(h));
-
-    console.log(`   ✅ Horários disponíveis: ${horariosLivres.length}`);
-    console.log(`   Lista: ${horariosLivres.join(', ')}`);
-
-    return horariosLivres;
+    console.log(`   ✅ ${horariosRetorno.length} horários disponíveis`);
+    return {
+      horarios: horariosRetorno,
+      periodosEstruturados: resultado.periodos
+    };
 
   } catch (error) {
-    console.error('❌ Erro ao buscar horários disponíveis:', error);
-    return [];
+    console.error('❌ Erro buscarHorariosDisponiveis:', error);
+    return { horarios: [] };
   }
 };
+
 
 // ============================================
 // ✅ NOVO: VERIFICAR PERÍODOS DISPONÍVEIS
@@ -205,20 +109,20 @@ const verificarPeriodosDisponiveis = async (
     const periodosDisponiveis: string[] = [];
 
     // Verificar manhã
-    const horariosManha = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'manhã');
-    if (horariosManha.length > 0) {
+    const resManha = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'manhã');
+    if (resManha.horarios.length > 0) {
       periodosDisponiveis.push('manhã');
     }
 
     // Verificar tarde
-    const horariosTarde = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'tarde');
-    if (horariosTarde.length > 0) {
+    const resTarde = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'tarde');
+    if (resTarde.horarios.length > 0) {
       periodosDisponiveis.push('tarde');
     }
 
     // Verificar noite
-    const horariosNoite = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'noite');
-    if (horariosNoite.length > 0) {
+    const resNoite = await buscarHorariosDisponiveis(companyId, profissionalNome, data, profissionais, 'noite');
+    if (resNoite.horarios.length > 0) {
       periodosDisponiveis.push('noite');
     }
 
@@ -573,57 +477,91 @@ export const extrairDadosMensagem = async (
       console.log(`   ✅ Período extraído: ${periodoExtraido}`);
     }
 
-    // ✅ BUSCAR HORÁRIOS DISPONÍVEIS (se tiver data e profissional)
-    if (dadosAcumulados.data && dadosAcumulados.profissional) {
+    // ✅ BUSCAR HORÁRIOS DISPONÍVEIS (se tiver data)
+    if (dadosAcumulados.data) { // REMOVIDO: && dadosAcumulados.profissional
 
       // 🔄 AJUSTE: Se a data for HOJE e já passou do horário de funcionamento, sugerir AMANHÃ
       const agora = new Date();
       const [diaH, mesH, anoH] = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(agora).split('/');
       const hojeStr = `${anoH}-${mesH}-${diaH}`;
 
-      if (dadosAcumulados.data === hojeStr) {
-        const horariosHoje = await buscarHorariosDisponiveis(
+      // Se temos profissional, podemos verificar horários exatos
+      if (dadosAcumulados.profissional) {
+        if (dadosAcumulados.data === hojeStr) {
+          const resHoje = await buscarHorariosDisponiveis(
+            contexto.companyId,
+            dadosAcumulados.profissional,
+            dadosAcumulados.data,
+            contexto.profissionais
+          );
+
+          // Se hoje não tem mais nada, pula para amanhã automaticamente
+          if (resHoje.horarios.length === 0) {
+            const amanha = new Date(agora);
+            amanha.setDate(amanha.getDate() + 1);
+            const [diaA, mesA, anoA] = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(amanha).split('/');
+            const amanhaStr = `${anoA}-${mesA}-${diaA}`;
+
+            console.log(`   ⚠️ Hoje (${hojeStr}) já esgotado ou fechado. Pulando para amanhã (${amanhaStr})...`);
+            dadosAcumulados.data = amanhaStr;
+            dadosAcumulados.puloParaAmanha = true;
+          } else {
+            dadosAcumulados.puloParaAmanha = false;
+          }
+        } else {
+          dadosAcumulados.puloParaAmanha = false;
+        }
+
+        // Buscar horários disponíveis (seja hoje ou amanhã pulado)
+        const resultadoBusca = await buscarHorariosDisponiveis(
+          contexto.companyId,
+          dadosAcumulados.profissional,
+          dadosAcumulados.data,
+          contexto.profissionais,
+          dadosAcumulados.periodo
+        );
+        dadosAcumulados.horariosDisponiveis = resultadoBusca.horarios;
+
+        if (resultadoBusca.periodosEstruturados) {
+          dadosAcumulados.horariosPorPeriodo = resultadoBusca.periodosEstruturados;
+        }
+
+        dadosAcumulados.periodosDisponiveis = await verificarPeriodosDisponiveis(
           contexto.companyId,
           dadosAcumulados.profissional,
           dadosAcumulados.data,
           contexto.profissionais
         );
+      }
+      // Se NÃO temos profissional, mas temos data HOJE, verifica geral
+      else if (dadosAcumulados.data === hojeStr) {
+        // Importar verificação geral (ou usar lógica simplificada de períodos)
+        const { determinarPeriodosDisponiveis } = await import('./validationService.js');
+        const [horaA, minA] = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(agora).split(':');
 
-        // Se hoje não tem mais nada, pula para amanhã automaticamente
-        if (horariosHoje.length === 0) {
+        const periodosHoje = await determinarPeriodosDisponiveis(
+          contexto.companyId,
+          hojeStr,
+          hojeStr,
+          `${horaA}:${minA}`
+        );
+
+        if (periodosHoje.periodos.length === 0) {
           const amanha = new Date(agora);
           amanha.setDate(amanha.getDate() + 1);
           const [diaA, mesA, anoA] = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(amanha).split('/');
           const amanhaStr = `${anoA}-${mesA}-${diaA}`;
 
-          console.log(`   ⚠️ Hoje (${hojeStr}) já esgotado ou fechado. Pulando para amanhã (${amanhaStr})...`);
+          console.log(`   ⚠️ Hoje (${hojeStr}) geral já esgotado. Pulando para amanhã (${amanhaStr})...`);
           dadosAcumulados.data = amanhaStr;
           dadosAcumulados.puloParaAmanha = true;
         } else {
-          // ✅ NOVO: Se tem horário hoje, garante que o flag seja falso
           dadosAcumulados.puloParaAmanha = false;
         }
       } else {
-        // ✅ NOVO: Se a data NÃO é hoje, garante que puloParaAmanha seja falso
+        // Data futura sem profissional
         dadosAcumulados.puloParaAmanha = false;
       }
-
-      // Buscar horários disponíveis (seja hoje ou amanhã pulado)
-      dadosAcumulados.horariosDisponiveis = await buscarHorariosDisponiveis(
-        contexto.companyId,
-        dadosAcumulados.profissional,
-        dadosAcumulados.data,
-        contexto.profissionais,
-        dadosAcumulados.periodo
-      );
-
-      // Buscar períodos disponíveis (sempre útil para a IA)
-      dadosAcumulados.periodosDisponiveis = await verificarPeriodosDisponiveis(
-        contexto.companyId,
-        dadosAcumulados.profissional,
-        dadosAcumulados.data,
-        contexto.profissionais // ✅ ADICIONADO
-      );
     }
 
     // ✅ SALVAR NA MEMÓRIA

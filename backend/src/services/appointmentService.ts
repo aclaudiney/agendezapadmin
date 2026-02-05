@@ -41,7 +41,7 @@ export const criarAgendamento = async (
         data_agendamento: dados.data_agendamento,
         hora_agendamento: dados.hora_agendamento,
         company_id: companyId,
-        status: 'confirmado',
+        status: 'pendente',
         origem: 'whatsapp',
         observacao: dados.observacao || null,
         created_at: new Date().toISOString()
@@ -374,5 +374,222 @@ export const buscarHorariosDisponiveis = async (
   } catch (error) {
     console.error('❌ Erro buscarHorariosDisponiveis:', error);
     return [];
+  }
+};
+
+// ============================================
+// 8️⃣ BUSCAR HORÁRIOS LIVRES POR PROFISSIONAL
+// ✅ NOVO: Filtra por profissional + períodos + remove passados
+// ============================================
+
+export const buscarHorariosLivresPorProfissional = async (
+  companyId: string,
+  profissionalId: string,
+  data: string,
+  duracao: number = 30
+): Promise<{
+  horarios: string[];
+  periodos: {
+    manha: string[];
+    tarde: string[];
+    noite: string[];
+  };
+}> => {
+  try {
+    // 1. Buscar horários disponíveis do profissional
+    const todosHorarios = await buscarHorariosDisponiveis(companyId, profissionalId, data, duracao);
+
+    // 2. Filtrar horários passados
+    const agora = new Date();
+    const hojeStr = agora.toISOString().split('T')[0];
+
+    const horariosValidos = todosHorarios.filter(h => {
+      if (data !== hojeStr) return true; // Dia futuro, todos válidos
+
+      const [hora, min] = h.split(':').map(Number);
+      const dataHora = new Date(data + 'T' + h + ':00-03:00');
+
+      return dataHora > agora; // Só horários futuros
+    });
+
+    // 3. Separar por período
+    const periodos = {
+      manha: horariosValidos.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 6 && hora < 12;
+      }),
+      tarde: horariosValidos.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 12 && hora < 18;
+      }),
+      noite: horariosValidos.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 18;
+      })
+    };
+
+    return {
+      horarios: horariosValidos,
+      periodos
+    };
+  } catch (error) {
+    console.error('❌ Erro buscarHorariosLivresPorProfissional:', error);
+    return {
+      horarios: [],
+      periodos: { manha: [], tarde: [], noite: [] }
+    };
+  }
+};
+
+// ============================================
+// 9️⃣ BUSCAR HORÁRIOS LIVRES GERAL (TODOS PROFISSIONAIS)
+// ✅ NOVO: Retorna horários disponíveis de qualquer profissional
+// ============================================
+
+export const buscarHorariosLivresGeral = async (
+  companyId: string,
+  data: string,
+  duracao: number = 30
+): Promise<{
+  horariosPorProfissional: Array<{
+    profissionalId: string;
+    profissionalNome: string;
+    horarios: string[];
+    periodos: {
+      manha: string[];
+      tarde: string[];
+      noite: string[];
+    };
+  }>;
+  horariosUnificados: string[];
+  periodosUnificados: {
+    manha: string[];
+    tarde: string[];
+    noite: string[];
+  };
+}> => {
+  try {
+    // 1. Buscar todos os profissionais da empresa
+    const { data: profissionais } = await supabase
+      .from('profissionais')
+      .select('id, nome')
+      .eq('company_id', companyId);
+
+    if (!profissionais || profissionais.length === 0) {
+      return {
+        horariosPorProfissional: [],
+        horariosUnificados: [],
+        periodosUnificados: { manha: [], tarde: [], noite: [] }
+      };
+    }
+
+    // 2. Buscar horários de cada profissional
+    const horariosPorProfissional = await Promise.all(
+      profissionais.map(async (prof) => {
+        const resultado = await buscarHorariosLivresPorProfissional(
+          companyId,
+          prof.id,
+          data,
+          duracao
+        );
+
+        return {
+          profissionalId: prof.id,
+          profissionalNome: prof.nome,
+          horarios: resultado.horarios,
+          periodos: resultado.periodos
+        };
+      })
+    );
+
+    // 3. Unificar horários (qualquer profissional disponível)
+    const horariosSet = new Set<string>();
+    horariosPorProfissional.forEach(prof => {
+      prof.horarios.forEach(h => horariosSet.add(h));
+    });
+
+    const horariosUnificados = Array.from(horariosSet).sort();
+
+    // 4. Separar por período
+    const periodosUnificados = {
+      manha: horariosUnificados.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 6 && hora < 12;
+      }),
+      tarde: horariosUnificados.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 12 && hora < 18;
+      }),
+      noite: horariosUnificados.filter(h => {
+        const hora = parseInt(h.split(':')[0]);
+        return hora >= 18;
+      })
+    };
+
+    return {
+      horariosPorProfissional,
+      horariosUnificados,
+      periodosUnificados
+    };
+  } catch (error) {
+    console.error('❌ Erro buscarHorariosLivresGeral:', error);
+    return {
+      horariosPorProfissional: [],
+      horariosUnificados: [],
+      periodosUnificados: { manha: [], tarde: [], noite: [] }
+    };
+  }
+};
+
+// ============================================
+// 🔟 VALIDAR HORÁRIO DISPONÍVEL
+// ✅ NOVO: Valida ANTES de confirmar agendamento
+// ============================================
+
+export const validarHorarioDisponivel = async (
+  companyId: string,
+  profissionalId: string,
+  data: string,
+  hora: string,
+  duracao: number = 30
+): Promise<{
+  disponivel: boolean;
+  motivo?: string;
+}> => {
+  try {
+    // 1. Buscar horários disponíveis
+    const horariosDisponiveis = await buscarHorariosDisponiveis(
+      companyId,
+      profissionalId,
+      data,
+      duracao
+    );
+
+    // 2. Verificar se horário está na lista
+    if (!horariosDisponiveis.includes(hora)) {
+      return {
+        disponivel: false,
+        motivo: 'Horário não disponível ou já ocupado'
+      };
+    }
+
+    // 3. Verificar se não está no passado
+    const agora = new Date();
+    const dataAgendamento = new Date(`${data}T${hora}:00-03:00`);
+
+    if (dataAgendamento <= agora) {
+      return {
+        disponivel: false,
+        motivo: 'Horário já passou'
+      };
+    }
+
+    return { disponivel: true };
+  } catch (error) {
+    console.error('❌ Erro validarHorarioDisponivel:', error);
+    return {
+      disponivel: false,
+      motivo: 'Erro ao validar horário'
+    };
   }
 };
