@@ -6,10 +6,10 @@
  */
 
 import { db, supabase } from '../supabase.js';
-import { 
-  Agendamento, 
-  CriarAgendamentoInput, 
-  AtualizarAgendamentoInput, 
+import {
+  Agendamento,
+  CriarAgendamentoInput,
+  AtualizarAgendamentoInput,
   RespostaAgendamento,
   AgendamentoDoCliente
 } from '../types/agendamento.js';
@@ -136,7 +136,7 @@ export const buscarProximoAgendamento = async (
 ): Promise<AgendamentoDoCliente | null> => {
   try {
     const agendamentos = await buscarAgendamentosCliente(clienteId, companyId);
-    
+
     if (agendamentos.length === 0) {
       return null;
     }
@@ -179,8 +179,7 @@ export const cancelarAgendamento = async (
       .from('agendamentos')
       .update({
         status: 'cancelado',
-        observacao: observacao || agendamento.observacao,
-        updated_at: new Date().toISOString()
+        observacao: observacao || agendamento.observacao
       })
       .eq('id', agendamentoId)
       .eq('company_id', companyId);
@@ -231,8 +230,7 @@ export const atualizarAgendamento = async (
         ...(dados.data_agendamento && { data_agendamento: dados.data_agendamento }),
         ...(dados.hora_agendamento && { hora_agendamento: dados.hora_agendamento }),
         ...(dados.status && { status: dados.status }),
-        ...(dados.observacao && { observacao: dados.observacao }),
-        updated_at: new Date().toISOString()
+        ...(dados.observacao && { observacao: dados.observacao })
       })
       .eq('id', agendamentoId)
       .eq('company_id', companyId)
@@ -339,7 +337,13 @@ export const buscarHorariosDisponiveis = async (
       .eq('company_id', companyId)
       .neq('status', 'cancelado');
 
-    const horariosOcupados = (ocupados || []).map((a: any) => a.hora_agendamento);
+    // ✅ CORREÇÃO: Formatar horários ocupados para HH:MM e arredondar para a grade
+    const horariosOcupados = (ocupados || []).map((a: any) => {
+      if (typeof a.hora_agendamento !== 'string') return a.hora_agendamento;
+      const [h, m] = a.hora_agendamento.split(':').map(Number);
+      const mArredondado = m >= 30 ? 30 : 0;
+      return `${String(h).padStart(2, '0')}:${String(mArredondado).padStart(2, '0')}`;
+    });
 
     // ✅ CORRIGIDO: Usar horarioDoDia (ex: "09:00-18:00")
     const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
@@ -351,7 +355,7 @@ export const buscarHorariosDisponiveis = async (
 
     while (hora < horaFechamento || (hora === horaFechamento && min < minFechamento)) {
       const horarioFormatado = `${String(hora).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-      
+
       const minutosFim = horaFechamento * 60 + minFechamento;
       const minutosAgora = hora * 60 + min + duracao;
 

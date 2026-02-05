@@ -28,7 +28,7 @@ export const extrairTelefoneDoJid = (jid: string): string => {
 
     if (!telefone.startsWith('55')) {
       console.log(`   ⚠️  Não começa com 55`);
-      
+
       if (telefone.length === 15) {
         console.log(`   ✅ Detectado: número nacional sem país (15 dígitos)`);
         telefone = `55${telefone}`;
@@ -53,83 +53,81 @@ export const extrairTelefoneDoJid = (jid: string): string => {
 // 2️⃣ IDENTIFICAR TIPO DE CONVERSA
 // ============================================
 
+const normalizarTexto = (texto: string): string => {
+  return texto
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+};
+
 export const identificarTipoConversa = (mensagem: string): TipoConversa => {
   try {
-    const msg = mensagem.toLowerCase().trim();
+    const rawMsg = mensagem.toLowerCase().trim();
+    const msg = normalizarTexto(mensagem);
+
+    // REMARCAR (Prioridade para evitar confusão com cancelar/agendar)
+    if (
+      msg.match(/remarcar/i) ||
+      msg.match(/reagendar/i) ||
+      msg.match(/mudar (as |o |meu |de |para )/i) ||
+      msg.match(/trocar (as |o |meu |de |para )/i) ||
+      msg.match(/passar (as |o |meu |para )/i) ||
+      msg.match(/outr[oa] (dia|data|horario)/i) ||
+      (msg.match(/nao (vou|posso|consigo)/i) && msg.match(/(marcar|agendar|pode ser|as \d)/i)) ||
+      msg.match(/em vez de/i)
+    ) {
+      return 'remarcar';
+    }
 
     // CONSULTAR
     if (
-      msg.includes('qual é meu agendamento') ||
-      msg.includes('qual meu agendamento') ||
-      msg.includes('quando é meu') ||
-      msg.includes('próximo agendamento') ||
-      msg.includes('meu horário') ||
-      msg.includes('que horas é') ||
-      msg.includes('me mostra') ||
-      msg.includes('consultar agendamento') ||
-      msg.includes('ver agendamento') ||
-      msg.includes('que dia tenho')
+      msg.match(/quais? (os |meus )?horarios/i) ||
+      msg.match(/quando (e|eu tenho)/i) ||
+      msg.match(/ver (meu |meus )?agendamentos?/i) ||
+      msg.match(/consultar agendamentos?/i) ||
+      msg.match(/que horas (e|eu agendei|e meu)/i) ||
+      msg.match(/tenho agendado/i) ||
+      msg.match(/quais? agendamentos?/i) ||
+      msg.match(/o que (eu )?tenho/i)
     ) {
       return 'consultar';
     }
 
     // CANCELAR
     if (
-      msg.includes('cancelar') ||
-      msg.includes('desmarcar') ||
-      msg.includes('quero cancelar') ||
-      msg.includes('preciso cancelar') ||
-      msg.includes('cancelar meu') ||
-      msg.includes('não vou mais')
+      msg.match(/cancelar/i) ||
+      msg.match(/desmarcar/i) ||
+      msg.match(/nao (vou|posso|consigo) (mais|ir)/i) ||
+      msg.match(/tira (meu |meus )?agendamentos?/i) ||
+      rawMsg.match(/cancela/i)
     ) {
       return 'cancelar';
     }
 
-    // REMARCAR
-    if (
-      msg.includes('remarcar') ||
-      msg.includes('mudar de data') ||
-      msg.includes('mudar horário') ||
-      msg.includes('trocar de data') ||
-      msg.includes('trocar horário') ||
-      msg.includes('preciso remarcar') ||
-      msg.includes('quer remarcar')
-    ) {
-      return 'remarcar';
-    }
-
     // ATRASAR
     if (
-      msg.includes('vou me atrasar') ||
-      msg.includes('vou atrasar') ||
-      msg.includes('atrasado') ||
-      msg.includes('atraso de') ||
-      msg.includes('minutos de atraso') ||
-      msg.includes('vou chegar atrasado')
+      msg.match(/atrasar/i) ||
+      msg.match(/atraso/i) ||
+      msg.match(/chegar.*atrasado/i)
     ) {
       return 'atrasar';
     }
 
-    // COMENTÁRIO
+    // COMENTARIO
     if (
-      msg.includes('observação') ||
-      msg.includes('nota') ||
-      msg.includes('comentário') ||
-      msg.includes('pode deixar registrado') ||
-      msg.includes('quer deixar uma nota')
+      msg.match(/observacao/i) ||
+      msg.match(/nota/i) ||
+      msg.match(/comentario/i) ||
+      msg.match(/deixar registrado/i)
     ) {
       return 'comentario';
     }
 
-    // CONFIRMAÇÃO
+    // CONFIRMACAO
     if (
-      msg.includes('sim') ||
-      msg.includes('pode') ||
-      msg.includes('tá bom') ||
-      msg.includes('ok') ||
-      msg.includes('confirma') ||
-      msg.includes('tá certo') ||
-      msg.includes('certo')
+      msg.match(/^(sim|ok|pode|confirma|ta bom|ta certo|certo|fechou|valeu)/i) ||
+      msg.match(/pode confirmar/i)
     ) {
       return 'confirmacao';
     }
@@ -189,10 +187,14 @@ export const montarContextoConversa = async (
     console.log(`      Serviços: ${servicos.length}`);
     console.log(`      Profissionais: ${profissionais.length}`);
 
-    // 6. DATA E HORA ATUAL
+    // 6. DATA E HORA ATUAL (Ajustado para America/Sao_Paulo)
     const agora = new Date();
-    const horarioAtual = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
-    const dataAtual = agora.toISOString().split('T')[0]; // YYYY-MM-DD
+    const formatterData = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const formatterHora = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false });
+
+    const [dia, mes, ano] = formatterData.format(agora).split('/');
+    const dataAtual = `${ano}-${mes}-${dia}`; // YYYY-MM-DD
+    const horarioAtual = formatterHora.format(agora);
 
     // 7. VERIFICAR SE É SOLO (1 único profissional)
     const eSolo = profissionais.length === 1;
@@ -272,7 +274,7 @@ export const extrairDadosMensagem = async (
 ) => {
   try {
     console.log(`\n📊 Extraindo dados da mensagem...`);
-    
+
     // ✅ CHAMA A FUNÇÃO IMPORTADA (renomeada para evitar conflito)
     const dadosExtraidos = await extrairDadosDoTexto(mensagem, contexto);
 
@@ -300,7 +302,7 @@ export const validarDadosExtraidos = async (
 ) => {
   try {
     console.log(`\n🔍 Validando dados extraídos...`);
-    
+
     const dadosValidados = await validarEEnriquecerContexto(
       dadosExtraidos,
       contexto
@@ -356,11 +358,13 @@ export const prepararDadosParaIA = (contexto: ConversationContext, dadosValidado
 
       // AGENDAMENTOS DO CLIENTE
       temAgendamentos: contexto.agendamentos.length > 0,
-      agendamentosProximos: contexto.agendamentos.length > 0 
-        ? contexto.agendamentos.slice(0, 3).map(a => 
-            `${a.servico} - ${a.data} às ${a.hora} com ${a.profissional}`
-          )
+      agendamentosProximos: contexto.agendamentos.length > 0
+        ? contexto.agendamentos.slice(0, 5).map(a => ({
+          id: a.id,
+          descricao: `${a.servico} - ${a.data} às ${a.hora} com ${a.profissional}`
+        }))
         : [],
+      agendamentosCompletos: contexto.agendamentos,
 
       // DATA/HORA
       dataAtual: contexto.dataAtual,

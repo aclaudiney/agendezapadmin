@@ -44,6 +44,7 @@ export const salvarMensagemWhatsApp = async (dados: {
       return null;
     }
 
+    /* 
     // 2. ATUALIZAR A TABELA DE CONVERSAS (Para aparecer no CRM)
     // O upsert verifica se já existe uma conversa com esse telefone para essa empresa
     const { error: convError } = await supabase
@@ -54,8 +55,7 @@ export const salvarMensagemWhatsApp = async (dados: {
         client_name: dados.clientName || 'Cliente WhatsApp',
         last_message_at: new Date(),
         last_incoming_message: dados.direction === 'incoming' ? dados.messageText : undefined,
-        last_outgoing_message: dados.direction === 'outgoing' ? dados.messageText : undefined,
-        updated_at: new Date()
+        last_outgoing_message: dados.direction === 'outgoing' ? dados.messageText : undefined
       }, { 
         onConflict: 'company_id,client_phone' 
       });
@@ -63,6 +63,7 @@ export const salvarMensagemWhatsApp = async (dados: {
     if (convError) {
       console.error('❌ Erro ao atualizar whatsapp_conversations:', convError.message);
     }
+    */
 
     console.log(`✅ Mensagem e Conversa atualizadas: ${dados.direction}`);
     return messageData;
@@ -136,7 +137,7 @@ export const buscarEstatisticasConversas = async (companyId: string) => {
     if (error || !data) return { total: 0, incoming: 0, outgoing: 0, today: 0 };
 
     const hoje = new Date().toISOString().split('T')[0];
-    
+
     return {
       total: data.length,
       incoming: data.filter(m => m.direction === 'incoming').length,

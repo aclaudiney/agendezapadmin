@@ -13,20 +13,93 @@ import axios from 'axios';
 import { ConversationContext } from './types/conversation.js';
 import { tentarAgendar } from './AgendamentoController.js';
 import { criarNovoCliente } from './services/clientService.js';
+import { cancelarAgendamento, atualizarAgendamento, adicionarObservacao as addObs } from './services/appointmentService.js';
 
-// Memória de chat segregada por empresa e usuário
+// Memória de chat segregada por empresa e usuário (BACKUP EM MEMÓRIA)
 const chatsMemoria: Record<string, any[]> = {};
+
+// ✅ FUNÇÕES DE PERSISTÊNCIA NO BANCO
+const carregarHistoricoBanco = async (companyId: string, jid: string) => {
+    try {
+        const response = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`, {
+            params: {
+                company_id: `eq.${companyId}`,
+                client_jid: `eq.${jid}`,
+                select: 'role,content',
+                order: 'created_at.asc'
+            },
+            headers: {
+                'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
+                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`
+            }
+        });
+
+        const data = response.data;
+        if (!data || !Array.isArray(data)) return [];
+
+        return data.map((m: any) => ({
+            role: m.role,
+            parts: [{ text: m.content }]
+        }));
+    } catch (error) {
+        console.error("❌ Erro ao carregar histórico do banco:", error);
+        return [];
+    }
+};
+
+const salvarMensagemBanco = async (companyId: string, jid: string, role: string, content: string) => {
+    try {
+        await axios.post(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`,
+            {
+                company_id: companyId,
+                client_jid: jid,
+                role: role,
+                content: content
+            },
+            {
+                headers: {
+                    'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
+                    'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                }
+            }
+        );
+    } catch (error) {
+        console.error("❌ Erro ao salvar mensagem no banco:", error);
+    }
+};
+
+const excluirHistoricoBanco = async (companyId: string, jid: string) => {
+    try {
+        await axios.delete(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`, {
+            params: {
+                company_id: `eq.${companyId}`,
+                client_jid: `eq.${jid}`
+            },
+            headers: {
+                'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
+                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`
+            }
+        });
+    } catch (error) {
+        console.error("❌ Erro ao excluir histórico do banco:", error);
+    }
+};
 
 export const gerarRespostaIA = async (dados: any) => {
     try {
         const memKey = `${dados.companyId}_${dados.jid}`;
-        
-        if (!chatsMemoria[memKey]) {
-            chatsMemoria[memKey] = [];
+
+        // 1️⃣ CARREGAR HISTÓRICO (BANCO + FALLBACK MEMÓRIA)
+        let historico = await carregarHistoricoBanco(dados.companyId, dados.jid);
+
+        if (historico.length === 0 && chatsMemoria[memKey]) {
+            historico = chatsMemoria[memKey];
         }
 
         console.log(`\n[IA] Gerando resposta - Tipo: ${dados.tipoConversa || 'agendar'}`);
-        console.log(`   Cliente existe: ${dados.clienteExiste}`);
+        console.log(`   Histórico carregado: ${historico.length} mensagens`);
 
         const dadosExtraidos = dados.dadosExtraidos || {};
         const validacoes = dadosExtraidos.validacoes || {};
@@ -42,117 +115,132 @@ export const gerarRespostaIA = async (dados: any) => {
         // ✅ ETAPA 1: CORRIGIDO - Mostra horários e períodos disponíveis!
         let resumoDadosExtraidos = '';
         if (dadosExtraidos.servico || dadosExtraidos.data || dadosExtraidos.hora) {
-          resumoDadosExtraidos = `\n📋 DADOS JA INFORMADOS PELO CLIENTE:\n`;
-          if (dadosExtraidos.servico) resumoDadosExtraidos += `✅ Servico: ${dadosExtraidos.servico}\n`;
-          
-          // ✅ ETAPA 1: Formata data corretamente
-          if (dadosExtraidos.data) {
-            const [ano, mes, dia] = dadosExtraidos.data.split('-');
-            const dataFormatada = `${dia}/${mes}/${ano}`;
-            resumoDadosExtraidos += `✅ Data: ${dataFormatada} (${dadosExtraidos.data})\n`;
-          }
-          
-          if (dadosExtraidos.periodo) resumoDadosExtraidos += `✅ Periodo: ${dadosExtraidos.periodo}\n`;
-          if (dadosExtraidos.hora) resumoDadosExtraidos += `✅ Horario: ${dadosExtraidos.hora}\n`;
-          if (dadosExtraidos.profissional) resumoDadosExtraidos += `✅ Profissional: ${dadosExtraidos.profissional}\n`;
-          if (dadosExtraidos.nome) resumoDadosExtraidos += `✅ Nome: ${dadosExtraidos.nome}\n`;
-          
-          // ✅ ETAPA 1: NOVO - Horários disponíveis
-          if (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 0) {
-            resumoDadosExtraidos += `\n🕐 HORÁRIOS DISPONÍVEIS ${dadosExtraidos.periodo ? `(${dadosExtraidos.periodo})` : ''}:\n`;
-            resumoDadosExtraidos += dadosExtraidos.horariosDisponiveis.join(', ') + '\n';
-            resumoDadosExtraidos += `\n⚠️ CRÍTICO: Mostre ESTES horários ao cliente! Não invente outros!\n`;
-            resumoDadosExtraidos += `⚠️ Se cliente escolher horário, VALIDE se está nesta lista!\n`;
-          } else if (dadosExtraidos.data && dadosExtraidos.profissional && dadosExtraidos.periodo) {
-            resumoDadosExtraidos += `\n❌ NENHUM HORÁRIO DISPONÍVEL para ${dadosExtraidos.periodo}!\n`;
-            resumoDadosExtraidos += `⚠️ Informe ao cliente e sugira outro período!\n`;
-          }
-          
+            resumoDadosExtraidos = `\n📋 DADOS JA INFORMADOS PELO CLIENTE:\n`;
+            if (dadosExtraidos.servico) resumoDadosExtraidos += `✅ Servico: ${dadosExtraidos.servico}\n`;
 
-          
-          resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
+            // ✅ ETAPA 1: Formata data corretamente
+            if (dadosExtraidos.data) {
+                const [ano, mes, dia] = dadosExtraidos.data.split('-');
+                const dataFormatada = `${dia}/${mes}/${ano}`;
+                resumoDadosExtraidos += `✅ Data: ${dataFormatada} (${dadosExtraidos.data})\n`;
+            }
+
+            if (dadosExtraidos.periodo) resumoDadosExtraidos += `✅ Periodo: ${dadosExtraidos.periodo}\n`;
+            if (dadosExtraidos.hora) resumoDadosExtraidos += `✅ Horario: ${dadosExtraidos.hora}\n`;
+            if (dadosExtraidos.profissional) resumoDadosExtraidos += `✅ Profissional: ${dadosExtraidos.profissional}\n`;
+            if (dadosExtraidos.nome) resumoDadosExtraidos += `✅ Nome: ${dadosExtraidos.nome}\n`;
+
+            // ✅ ETAPA 1: NOVO - Horários disponíveis
+            if (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 0) {
+                resumoDadosExtraidos += `\n🕐 HORÁRIOS DISPONÍVEIS ${dadosExtraidos.periodo ? `(${dadosExtraidos.periodo})` : ''}:\n`;
+                // Se tiver muitos horários, mostrar os primeiros para economizar tokens
+                const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 8);
+                resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 8 ? '...' : '') + '\n';
+                resumoDadosExtraidos += `⚠️ IMPORTANTE: Liste estes horários para o cliente escolher!\n`;
+            } else if (dadosExtraidos.data && dadosExtraidos.profissional) {
+                if (dadosExtraidos.periodosDisponiveis && dadosExtraidos.periodosDisponiveis.length > 0) {
+                    resumoDadosExtraidos += `\n✅ PERÍODOS COM VAGA: ${dadosExtraidos.periodosDisponiveis.join(', ')}\n`;
+                    resumoDadosExtraidos += `⚠️ Sugira estes períodos ao cliente!\n`;
+                } else {
+                    resumoDadosExtraidos += `\n❌ NENHUM HORÁRIO DISPONÍVEL para este dia!\n`;
+                }
+            }
+
+            if (dadosExtraidos.puloParaAmanha) {
+                const mensagemLower = (dados.mensagem || '').toLowerCase();
+                const clienteDisseAmanha = mensagemLower.includes('amanhã') || mensagemLower.includes('amanha');
+
+                if (clienteDisseAmanha) {
+                    resumoDadosExtraidos += `\n✅ O CLIENTE JÁ PEDIU PARA AMANHÃ. Prossiga diretamente com os horários de amanhã.\n`;
+                } else {
+                    resumoDadosExtraidos += `\n⚠️ AVISO CRÍTICO: Hoje já encerramos ou não há vagas. Os horários listados são para AMANHÃ!\n`;
+                    resumoDadosExtraidos += `⚠️ Você DEVE avisar o cliente: "Ney, para hoje já não temos mais vagas, mas para amanhã tenho..."\n`;
+                }
+            }
+
+            resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
         }
 
         // INFORMAÇÕES DE VALIDAÇÃO
         let infoValidacao = '';
-        
+
         if (dadosExtraidos.hora && !validacoes.horarioValido) {
-          infoValidacao += `\n🚫 HORÁRIO ${dadosExtraidos.hora} OCUPADO OU FORA DO FUNCIONAMENTO!\n`;
-          
-          if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length > 0) {
-            infoValidacao += `\n💡 HORÁRIOS PRÓXIMOS DISPONÍVEIS:\n`;
-            infoValidacao += validacoes.sugestoesHorarios.map((h: string) => `- ${h}`).join('\n');
-            infoValidacao += `\n`;
-          }
-          
-          if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
-            infoValidacao += `\n👥 OUTROS PROFISSIONAIS DISPONÍVEIS:\n`;
-            for (const prof of validacoes.sugestoesProfissionais) {
-              if (prof.horarios && prof.horarios.length > 0) {
-                infoValidacao += `\n${prof.profissional}:\n`;
-                infoValidacao += prof.horarios.map((h: string) => `  - ${h}`).join('\n');
+            infoValidacao += `\n🚫 HORÁRIO ${dadosExtraidos.hora} OCUPADO OU FORA DO FUNCIONAMENTO!\n`;
+
+            if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length > 0) {
+                infoValidacao += `\n💡 HORÁRIOS PRÓXIMOS DISPONÍVEIS:\n`;
+                infoValidacao += validacoes.sugestoesHorarios.map((h: string) => `- ${h}`).join('\n');
                 infoValidacao += `\n`;
-              }
             }
-          }
-          
-          infoValidacao += `\n⚠️ CRÍTICO - LEIA COM ATENÇÃO:\n`;
-          infoValidacao += `\n❌ O HORÁRIO ${dadosExtraidos.hora} NÃO PODE SER AGENDADO!\n`;
-          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
-          infoValidacao += `1. NÃO perguntar "Posso confirmar?" - o horário está INDISPONÍVEL!\n`;
-          infoValidacao += `2. INFORMAR IMEDIATAMENTE que o horário não está disponível\n`;
-          infoValidacao += `3. OFERECER as alternativas acima de forma natural e amigável\n`;
-          infoValidacao += `\n📝 EXEMPLO DE RESPOSTA CORRETA:\n`;
-          infoValidacao += `"O horário ${dadosExtraidos.hora}${dadosExtraidos.profissional ? ' com ' + dadosExtraidos.profissional : ''} não tá disponível. `;
-          
-          if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length >= 3) {
-            infoValidacao += `Mas tenho ${validacoes.sugestoesHorarios[0]}, ${validacoes.sugestoesHorarios[1]} ou ${validacoes.sugestoesHorarios[2]}. Qual prefere?"\n`;
-          } else if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
-            infoValidacao += `Mas tenho outros profissionais disponíveis. Quer ver as opções?"\n`;
-          } else {
-            infoValidacao += `Infelizmente não temos outros horários disponíveis para esse dia. Quer tentar outro dia?"\n`;
-          }
-          
-          infoValidacao += `\n❌ NUNCA FAÇA ISSO:\n`;
-          infoValidacao += `- "Perfeito! Confirmando: ... Posso confirmar?" (ERRADO - horário indisponível!)\n`;
-          infoValidacao += `- Pedir confirmação quando o horário está ocupado\n`;
-          infoValidacao += `- Fingir que o horário está disponível\n`;
-          infoValidacao += `\n`;
+
+            if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
+                infoValidacao += `\n👥 OUTROS PROFISSIONAIS DISPONÍVEIS:\n`;
+                for (const prof of validacoes.sugestoesProfissionais) {
+                    if (prof.horarios && prof.horarios.length > 0) {
+                        infoValidacao += `\n${prof.profissional}:\n`;
+                        infoValidacao += prof.horarios.map((h: string) => `  - ${h}`).join('\n');
+                        infoValidacao += `\n`;
+                    }
+                }
+            }
+
+            infoValidacao += `\n⚠️ CRÍTICO - LEIA COM ATENÇÃO:\n`;
+            infoValidacao += `\n❌ O HORÁRIO ${dadosExtraidos.hora} NÃO PODE SER AGENDADO!\n`;
+            infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+            infoValidacao += `1. NÃO perguntar "Posso confirmar?" - o horário está INDISPONÍVEL!\n`;
+            infoValidacao += `2. INFORMAR IMEDIATAMENTE que o horário não está disponível\n`;
+            infoValidacao += `3. OFERECER as alternativas acima de forma natural e amigável\n`;
+            infoValidacao += `\n📝 EXEMPLO DE RESPOSTA CORRETA:\n`;
+            infoValidacao += `"O horário ${dadosExtraidos.hora}${dadosExtraidos.profissional ? ' com ' + dadosExtraidos.profissional : ''} não tá disponível. `;
+
+            if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length >= 3) {
+                infoValidacao += `Mas tenho ${validacoes.sugestoesHorarios[0]}, ${validacoes.sugestoesHorarios[1]} ou ${validacoes.sugestoesHorarios[2]}. Qual prefere?"\n`;
+            } else if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
+                infoValidacao += `Mas tenho outros profissionais disponíveis. Quer ver as opções?"\n`;
+            } else {
+                infoValidacao += `Infelizmente não temos outros horários disponíveis para esse dia. Quer tentar outro dia?"\n`;
+            }
+
+            infoValidacao += `\n❌ NUNCA FAÇA ISSO:\n`;
+            infoValidacao += `- "Perfeito! Confirmando: ... Posso confirmar?" (ERRADO - horário indisponível!)\n`;
+            infoValidacao += `- Pedir confirmação quando o horário está ocupado\n`;
+            infoValidacao += `- Fingir que o horário está disponível\n`;
+            infoValidacao += `\n`;
         }
-        
+
         if (dadosExtraidos.hora && validacoes.horarioValido) {
-          infoValidacao += `\n✅ HORÁRIO ${dadosExtraidos.hora} DISPONÍVEL!\n`;
-          infoValidacao += `Pode prosseguir com o agendamento normalmente.\n`;
+            infoValidacao += `\n✅ HORÁRIO ${dadosExtraidos.hora} DISPONÍVEL!\n`;
+            infoValidacao += `Pode prosseguir com o agendamento normalmente.\n`;
         }
-        
+
         if (dadosExtraidos.data && !validacoes.diaAberto && validacoes.motivoErro) {
-          infoValidacao += `\n🚫 DIA FECHADO!\n`;
-          infoValidacao += `\n⚠️ CRÍTICO:\n`;
-          infoValidacao += `O estabelecimento está FECHADO neste dia!\n`;
-          infoValidacao += `Motivo: ${validacoes.motivoErro}\n`;
-          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
-          infoValidacao += `1. Informar que está fechado\n`;
-          infoValidacao += `2. Sugerir outro dia\n`;
-          infoValidacao += `3. NÃO tentar agendar para este dia\n`;
-          infoValidacao += `\n`;
+            infoValidacao += `\n🚫 DIA FECHADO!\n`;
+            infoValidacao += `\n⚠️ CRÍTICO:\n`;
+            infoValidacao += `O estabelecimento está FECHADO neste dia!\n`;
+            infoValidacao += `Motivo: ${validacoes.motivoErro}\n`;
+            infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+            infoValidacao += `1. Informar que está fechado\n`;
+            infoValidacao += `2. Sugerir outro dia\n`;
+            infoValidacao += `3. NÃO tentar agendar para este dia\n`;
+            infoValidacao += `\n`;
         }
-        
+
         if (dadosExtraidos.data && dadosExtraidos.hora && validacoes.horarioPassado && validacoes.motivoErro) {
-          infoValidacao += `\n⏰ HORÁRIO NO PASSADO!\n`;
-          infoValidacao += `\n⚠️ CRÍTICO:\n`;
-          infoValidacao += `${validacoes.motivoErro}\n`;
-          infoValidacao += `\n✅ VOCÊ DEVE:\n`;
-          infoValidacao += `1. Informar que o horário já passou\n`;
-          infoValidacao += `2. Sugerir horários futuros (com pelo menos 1h de antecedência)\n`;
-          infoValidacao += `3. NÃO tentar agendar horários no passado\n`;
-          infoValidacao += `\n`;
+            infoValidacao += `\n⏰ HORÁRIO NO PASSADO!\n`;
+            infoValidacao += `\n⚠️ CRÍTICO:\n`;
+            infoValidacao += `${validacoes.motivoErro}\n`;
+            infoValidacao += `\n✅ VOCÊ DEVE:\n`;
+            infoValidacao += `1. Informar que o horário já passou\n`;
+            infoValidacao += `2. Sugerir horários futuros (com pelo menos 1h de antecedência)\n`;
+            infoValidacao += `3. NÃO tentar agendar horários no passado\n`;
+            infoValidacao += `\n`;
         }
-        
+
         if (validacoes.periodosDisponiveis && validacoes.periodosDisponiveis.length > 0) {
-          infoValidacao += `\n⏰ PERÍODOS DISPONÍVEIS:\n`;
-          infoValidacao += validacoes.periodosDisponiveis.map((p: string) => `- ${p}`).join('\n');
-          infoValidacao += `\n`;
-          infoValidacao += `Pergunte ao cliente qual período prefere.\n`;
+            infoValidacao += `\n⏰ PERÍODOS DISPONÍVEIS:\n`;
+            infoValidacao += validacoes.periodosDisponiveis.map((p: string) => `- ${p}`).join('\n');
+            infoValidacao += `\n`;
+            infoValidacao += `Pergunte ao cliente qual período prefere.\n`;
         }
 
         let contextoCliente = '';
@@ -167,28 +255,28 @@ export const gerarRespostaIA = async (dados: any) => {
 📋 FLUXO: AGENDAR (Cliente Existente)
 
 1️⃣ SAUDAÇÃO INICIAL:
-   ${dadosExtraidos.servico || dadosExtraidos.data ? 
-     '⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para o próximo passo!' : 
-     '✅ Se primeira mensagem: "Oi ${dados.clienteNome}! Como posso ajudar?"'}
+   ${dadosExtraidos.servico || dadosExtraidos.data ?
+                            '⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para o próximo passo!' :
+                            '✅ Se primeira mensagem: "Oi ${dados.clienteNome}! Como posso ajudar?"'}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Qual serviço você quer agendar?"'}
 
 
-   ${dadosExtraidos.hora ? 
-     (validacoes.horarioValido ? 
-       '✅ Horário VÁLIDO e DISPONÍVEL - pode CONFIRMAR' : 
-       '🚫 Horário INVÁLIDO/OCUPADO - NÃO pergunte "posso confirmar?"\n   → OFEREÇA ALTERNATIVAS IMEDIATAMENTE (veja seção VALIDAÇÃO)') 
-     : dadosExtraidos.periodo ?
-       '⏰ Tem período - liste horários disponíveis desse período' :
-       '❌ Pergunte: "Prefere de manhã, tarde ou noite?"'}
+   ${dadosExtraidos.hora ?
+                            (validacoes.horarioValido ?
+                                '✅ Horário VÁLIDO e DISPONÍVEL - pode CONFIRMAR' :
+                                '🚫 Horário INVÁLIDO/OCUPADO - NÃO pergunte "posso confirmar?"\n   → OFEREÇA ALTERNATIVAS IMEDIATAMENTE (veja seção VALIDAÇÃO)')
+                            : dadosExtraidos.periodo ?
+                                '⏰ Tem período - liste horários disponíveis desse período' :
+                                '❌ Pergunte: "Prefere de manhã, tarde ou noite?"'}
 
 5️⃣ COLETAR PROFISSIONAL (se múltiplos):
-   ${dados.eSolo ? 
-     '⚠️ Só tem 1 profissional - pule esta etapa' : 
-     dadosExtraidos.profissional ? 
-       '✅ JÁ TEM - pule esta etapa' : 
-       '❌ Pergunte: "Com quem prefere? Temos: [LISTA TODOS]"'}
+   ${dados.eSolo ?
+                            '⚠️ Só tem 1 profissional - pule esta etapa' :
+                            dadosExtraidos.profissional ?
+                                '✅ JÁ TEM - pule esta etapa' :
+                                '❌ Pergunte: "Com quem prefere? Temos: [LISTA TODOS]"'}
 
 6️⃣ CONFIRMAR (APENAS SE TUDO VÁLIDO - ✅ CORRIGIDO):
    ⚠️ ATENÇÃO CRÍTICA: Só peça confirmação se:
@@ -214,24 +302,32 @@ export const gerarRespostaIA = async (dados: any) => {
                 case 'consultar':
                     instrucoesPorTipo = `
 📋 FLUXO: CONSULTAR
-1. Mostre os agendamentos: "Oi ${dados.clienteNome}! ${dados.temAgendamentos ? 
-   `Você tem:\n${dados.agendamentosProximos.join('\n')}` : 
-   'Você não tem agendamentos. Quer marcar um?'}"`;
+⚠️ REGRA CRÍTICA: NÃO peça nome nem data! Você já tem os dados no contexto.
+1. Filtre os agendamentos abaixo pela data que o cliente pediu (se ele pediu uma):
+   Data pedida: ${dadosExtraidos.data || 'Não especificada'}
+2. Responda IMEDIATAMENTE: ${dados.temAgendamentos ?
+                            `"Oi ${dados.clienteNome}! Vi aqui que você tem:\n${dados.agendamentosProximos.map((a: any) => `- ${a.descricao}`).join('\n')}"` :
+                            `"Oi ${dados.clienteNome}! Verifiquei aqui e você não tem agendamentos marcados. Gostaria de agendar?"`}
+3. Se houver muitos agendamentos e o cliente pediu um específico, foque nele.`;
                     break;
 
                 case 'cancelar':
                     instrucoesPorTipo = `
 📋 FLUXO: CANCELAR
-1. Confirme: "Quer cancelar seu ${dados.agendamentosProximos[0]}?"
-2. Se sim -> use 'cancelar_agendamento'`;
+1. Identifique qual agendamento cancelar. Você tem os IDs na seção 'AGENDAMENTOS EXISTENTES'.
+2. Se houver múltiplos no mesmo dia (como visto na lista), liste todos claramente com horário e peça para o cliente confirmar qual deles deseja desmarcar.
+3. JAMAIS diga que cancelou sem usar a ferramenta 'cancelar_agendamento' e receber 'sucesso'.
+4. Após o cliente confirmar qual ID, use 'cancelar_agendamento' com o agendamentoId correto.`;
                     break;
 
                 case 'remarcar':
                     instrucoesPorTipo = `
 📋 FLUXO: REMARCAR
-1. Mostre: "Vamos remarcar seu ${dados.agendamentosProximos[0]}"
-2. Pergunte: "Para quando quer remarcar?"
-3. Continue como agendamento normal`;
+1. Identifique o agendamento antigo (o que o cliente quer mudar) e o NOVO HORÁRIO.
+2. 🚫 RÍGIDO: SE o cliente disser qual horário quer mudar (ex: "muda o das 11:00"), procure na lista 'AGENDAMENTOS EXISTENTES', pegue o ID e use-o automaticamente. JAMAIS pergunte o ID.
+3. Se houver múltiplos agendamentos e ele não especificou qual mudar, liste os horários dele e pergunte "Qual desses você quer mudar?".
+4. Com ID e Novo Horário em mãos -> USE 'remarcar_agendamento'.
+5. REGRA DE OURO: O horário que o cliente JÁ TEM é dele (não conflita com ele mesmo).`;
                     break;
 
                 case 'confirmacao':
@@ -257,9 +353,9 @@ Cliente disse "sim"/"ok"/"confirma"
    NÃO peça nome no início da conversa!
 
 1️⃣ SAUDAÇÃO INICIAL:
-   ${dadosExtraidos.servico || dadosExtraidos.data ? 
-     '⚠️ Cliente JÁ DISSE o que quer!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para próximo passo!' :
-     '✅ Se mensagem é saudação simples ("oi", "olá"): "Oi! Bem-vindo! Como posso ajudar?"\n   ✅ Se mensagem já menciona agendamento: vá para próximo passo\n   ❌ NÃO peça nome ainda!'}
+   ${dadosExtraidos.servico || dadosExtraidos.data ?
+                            '⚠️ Cliente JÁ DISSE o que quer!\n   ❌ NÃO pergunte "Como posso ajudar?"\n   ✅ Vá DIRETO para próximo passo!' :
+                            '✅ Se mensagem é saudação simples ("oi", "olá"): "Oi! Bem-vindo! Como posso ajudar?"\n   ✅ Se mensagem já menciona agendamento: vá para próximo passo\n   ❌ NÃO peça nome ainda!'}
 
 2️⃣ COLETAR SERVIÇO:
    ${dadosExtraidos.servico ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Qual serviço?"'}
@@ -267,20 +363,22 @@ Cliente disse "sim"/"ok"/"confirma"
 3️⃣ COLETAR DATA:
    ${dadosExtraidos.data ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Para qual dia?"'}
 
-4️⃣ COLETAR HORÁRIO (✅ CORRIGIDO):
-   ${dadosExtraidos.hora ? 
-     (validacoes.horarioValido ? 
-       '✅ Válido - prossiga' : 
-       '🚫 Ocupado/Inválido - OFEREÇA ALTERNATIVAS IMEDIATAMENTE') 
-     : '❌ Pergunte período primeiro'}
+4️⃣ COLETAR HORARIO (✅ CORRIGIDO):
+   ${dadosExtraidos.hora ?
+                            (validacoes.horarioValido ?
+                                '✅ Válido - prossiga para pedir nome' :
+                                '🚫 Ocupado/Inválido - OFEREÇA ALTERNATIVAS IMEDIATAMENTE')
+                            : (dadosExtraidos.periodo ?
+                                '✅ Periodo identificado - MOSTRAR OPÇÕES E PEDIR HORA' :
+                                '❌ Sugira periodos: ' + (validacoes.periodosDisponiveis?.join(', ') || 'indisponível'))}
 
 5️⃣ COLETAR PROFISSIONAL (se múltiplos):
    ${dados.eSolo ? '⚠️ Só tem 1 - pule' : '❌ Liste todos disponíveis'}
 
 6️⃣ PEDIR NOME (ANTES DE CONFIRMAR - ✅ NOVO!):
-   ${dadosExtraidos.nome ? 
-     '✅ JÁ TEM nome - pode confirmar' : 
-     '❌ AGORA SIM! Tem todos os dados do agendamento.\n   Mostre resumo e pergunte: "Qual seu nome completo pra eu confirmar?"'}
+   ${dadosExtraidos.nome ?
+                            '✅ JÁ TEM nome - pode confirmar' :
+                            '❌ AGORA SIM! Tem todos os dados do agendamento.\n   Mostre resumo e pergunte: "Qual seu nome completo pra eu confirmar?"'}
 
 7️⃣ CONFIRMAR (DEPOIS DE TER O NOME):
    - Quando cliente informar o nome
@@ -328,9 +426,9 @@ Você: [usa confirmar_agendamento com nomeCliente="Pedro Silva"]
 
                 case 'consultar':
                     instrucoesPorTipo = `
-📋 FLUXO: CONSULTAR (Novo)
-1. "Oi! Qual seu nome?"
-2. "Não encontrei agendamentos. Quer marcar?"`;
+📋 FLUXO: CONSULTAR (Novo Cliente)
+1. "Verifiquei aqui que não temos nenhum agendamento vinculado a este número."
+2. "Gostaria de marcar um horário? Temos [LISTA SERVIÇOS]"`;
                     break;
 
                 default:
@@ -341,8 +439,7 @@ Você: [usa confirmar_agendamento com nomeCliente="Pedro Silva"]
         const instrucoesFinais = `Você é ${dados.nomeAgente} da ${dados.nomeLoja}.
 ${regraSolo}
 
-📅 HOJE: ${new Date().toLocaleDateString('pt-BR')}
-🕐 AGORA: ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+📅 DATA/HORA ATUAL: ${dados.dataAtual} às ${dados.horarioAtual}
 
 ${contextoCliente}
 
@@ -356,32 +453,37 @@ ${resumoDadosExtraidos}
 
 ${infoValidacao}
 
+⭐ IDENTIFICAÇÃO (RÍGIDO):
+1. O TELEFONE DO CLIENTE É A SUA IDENTIDADE ÚNICA.
+2. Se os dados mostram 'Cliente REGISTRADO', JAMAIS peça nome, telefone ou qualquer confirmação de quem ele é.
+3. Se o cliente perguntar sobre "meus horários", responda IMEDIATAMENTE com os dados que você já tem no contexto. NÃO peça para ele confirmar o nome ou a data primeiro.
+
+⭐ AGENDAMENTOS EXISTENTES (SITUAÇÃO ATUAL):
+${dados.temAgendamentos ?
+                `⚠️ O cliente JÁ TEM estes agendamentos:
+${dados.agendamentosProximos.map((a: any) => `- ID: ${a.id} | ${a.descricao}`).join('\n')}
+✅ Use estas informações para responder consultas ou pedidos de cancelamento/mudança imediatamente!
+🚫 RÍGIDO: JAMAIS peça o "ID" para o cliente. Se ele disser "o das 11:00", você deve olhar na lista acima, achar o ID correspondente e usar na ferramenta automaticamente.` :
+                `✅ O cliente não possui agendamentos pendentes vinculados a este número.`}
+
 ⭐ PERSONALIDADE & ESTILO:
-1. 🎭 ADAPTÁVEL:
-   - Cliente formal → Você formal
-   - Cliente informal → Você informal
-   - Use o nome do cliente quando souber
+1. 🎭 ATENDENTE DE ELITE:
+   - Você é o melhor atendente do mundo: educado, ágil e proativo.
+   - Sua meta é FECHAR o agendamento da forma mais fácil possível.
    
-2. 💬 COMUNICAÇÃO:
-   - Respostas CURTAS (máx 3 linhas)
-   - Natural, não robotizado
-   - Emojis com moderação
-   - DATAS sempre DD/MM/YYYY
+2. 💬 COMUNICAÇÃO PROATIVA (REGRAS DE OURO):
+   - Se o cliente disse o DIA mas não a HORA:
+     - Veja periodosDisponiveis. Se tiver vários, pergunte qual prefere.
+     - Se só tiver UM período com vaga, já diga: "Para esse dia tenho vagas só à [Tarde], qual horário fica melhor para você?"
+   - Se o cliente escolheu um PERÍODO (ex: "de tarde"), liste IMEDIATAMENTE os 5 primeiros horários disponíveis.
+   - Se o sistema deu 'puloParaAmanha', informe ao cliente gentilmente.
    
 3. ✅ REGRAS CRÍTICAS:
-   - NUNCA pergunte dados já informados
-   - NUNCA invente informações
-   - NUNCA peça confirmação se horário está indisponível
-   - Se horário ocupado/inválido, SEMPRE ofereça alternativas IMEDIATAMENTE
-   - Múltiplos profissionais? LISTE TODOS
-   - Cliente novo? Peça nome só ANTES DE CONFIRMAR (não no início!)
-   - Se tem horariosDisponiveis → MOSTRE ao cliente!
-   - Se tem periodosDisponiveis → Pergunte qual período!
-   
-4. 🔧 USO DE FERRAMENTAS:
-   - Quando tiver TODOS os dados VÁLIDOS: use 'confirmar_agendamento'
-   - NÃO faça confirmação só em texto
-   - NÃO diga "vou confirmar" sem usar a ferramenta
+   - REGRA DE OURO: JAMAIS diga "Cancelado", "Agendado" ou "Confirmado" se você não tiver usado a ferramenta (tool) correspondente com sucesso. Mentir sobre uma ação é falha grave.
+   - REAGENDAMENTO: Se o cliente citar um horário que ele JÁ POSSUI (ex: "não vou conseguir às 9") e pedir outro (ex: "pode ser às 11?"), você deve tratar como REMARCAR, identificando o ID do antigo e coletando o novo.
+   - NUNCA invente horários. Use apenas os fornecidos.
+   - Respostas CURTAS e objetivas (máx 3-4 linhas).
+   - Se houver múltiplos profissionais e o cliente não escolheu, pergunte se tem preferência ou pode ser "qualquer um".
 
 ${instrucoesPorTipo}
 
@@ -389,31 +491,36 @@ ${instrucoesPorTipo}
 ${dados.promptBase || 'Seja prestativo e cordial.'}
 
 💡 DICAS FINAIS:
-- VALIDAÇÃO É FEITA AUTOMATICAMENTE - respeite os resultados!
-- Se horário tá ocupado, as sugestões JÁ estão calculadas acima
-- Ofereça alternativas ANTES de pedir confirmação
-- Se múltiplos profissionais têm horários diferentes, mostre todos
-- Seja direto e eficiente, mas sempre amigável`;
+- Se tiene horariosDisponiveis → MOSTRE ou pergunte o período.
+- Se tem periodosDisponiveis → Sugira e pergunte a preferência!
+- Seja o mais natural possível, evite listas longas demais.`;
 
         console.log(`   System prompt preparado (${instrucoesFinais.length} chars)`);
 
+        // 2️⃣ SALVAR MENSAGEM DO USUÁRIO
+        await salvarMensagemBanco(dados.companyId, dados.jid, "user", dados.mensagem);
+
+        // Atualizar memória local para redundância
+        if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
         chatsMemoria[memKey].push({
             role: "user",
             parts: [{ text: dados.mensagem }]
         });
 
-        console.log(`   Mensagem adicionada a memoria (total: ${chatsMemoria[memKey].length})`);
-
-        console.log(`   Chamando Gemini API...`);
+        console.log(`   Chamando Gemini API (v1beta)...`);
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
             {
+                // ✅ NOVO: Usar o campo oficial de instruções do sistema!
+                system_instruction: {
+                    parts: [{ text: instrucoesFinais }]
+                },
                 contents: [
+                    ...historico,
                     {
                         role: "user",
-                        parts: [{ text: instrucoesFinais }]
-                    },
-                    ...chatsMemoria[memKey]
+                        parts: [{ text: dados.mensagem }]
+                    }
                 ],
                 tools: [
                     {
@@ -482,23 +589,28 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
 
         if (part.functionCall) {
             console.log(`   Function call detectado: ${part.functionCall.name}`);
-            
+
             const resultado = await processarFunctionCall(
                 part.functionCall.name,
                 part.functionCall.args,
                 dados
             );
 
+            // 3️⃣ SALVAR RESPOSTA DO MODELO (FUNCTION CALL)
+            await salvarMensagemBanco(dados.companyId, dados.jid, "model", resultado.mensagem);
+
             chatsMemoria[memKey].push({
                 role: "model",
                 parts: [{ text: resultado.mensagem }]
             });
 
-            console.log(`   Resultado adicionado a memoria`);
             return resultado.mensagem;
         }
 
         const textoIA = part.text || "Como posso ajudar?";
+
+        // 3️⃣ SALVAR RESPOSTA DO MODELO (TEXTO)
+        await salvarMensagemBanco(dados.companyId, dados.jid, "model", textoIA);
 
         chatsMemoria[memKey].push({
             role: "model",
@@ -567,12 +679,12 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
 
         if (!clienteId && args.nomeCliente) {
             console.log(`   Criando novo cliente: ${args.nomeCliente}`);
-            
+
             let telefoneLimpo = dados.jid.split('@')[0];
             if (!telefoneLimpo.startsWith('55')) {
                 telefoneLimpo = `55${telefoneLimpo}`;
             }
-            
+
             console.log(`   Telefone formatado: ${telefoneLimpo}`);
 
             const resultado = await criarNovoCliente(
@@ -618,13 +730,13 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
 
         if (resultadoAgendamento.status === 'sucesso') {
             console.log(`   Agendamento criado com sucesso!`);
-            
+
             const res = resultadoAgendamento as any;
-            
+
             const [ano, mes, dia] = res.data.split('-');
             const dataFormatadaMostra = `${dia}/${mes}/${ano}`;
             const nomeClienteFinal = args.nomeCliente || dados.clienteNome || 'Cliente';
-            
+
             return {
                 mensagem: `✅ Agendamento confirmado ${nomeClienteFinal}!\n\n📋 ${res.servico}\n📅 ${dataFormatadaMostra} às ${res.hora}\n👤 ${res.profissional}\n\nAté logo! 👋`,
                 sucesso: true
@@ -648,9 +760,18 @@ const procesarConfirmarAgendamento = async (args: any, dados: any) => {
 const processarCancelarAgendamento = async (args: any, dados: any) => {
     try {
         console.log(`   Cancelando agendamento: ${args.agendamentoId}`);
+        const resultado = await cancelarAgendamento(args.agendamentoId, dados.companyId, args.motivo);
+
+        if (resultado.status === 'sucesso') {
+            return {
+                mensagem: '✅ Agendamento cancelado com sucesso! Se precisar de algo mais, é só falar.',
+                sucesso: true
+            };
+        }
+
         return {
-            mensagem: '✅ Agendamento cancelado com sucesso!',
-            sucesso: true
+            mensagem: `❌ Não consegui cancelar: ${resultado.mensagem}`,
+            sucesso: false
         };
     } catch (error) {
         console.error(`Erro cancelarAgendamento:`, error);
@@ -663,15 +784,93 @@ const processarCancelarAgendamento = async (args: any, dados: any) => {
 
 const processarRemarcarAgendamento = async (args: any, dados: any) => {
     try {
-        console.log(`   Remarcando agendamento: ${args.agendamentoId}`);
+        console.log(`\n🔄 [REMARCAR] Iniciando processo para ID: ${args.agendamentoId}`);
+
+        if (!args.agendamentoId) {
+            return {
+                mensagem: "❌ Erro: Não identifiquei qual agendamento você quer mudar. Pode me confirmar o horário antigo?",
+                sucesso: false
+            };
+        }
+
+        // --- BUSCAR DADOS DO AGENDAMENTO ORIGINAL ---
+        const agendamentoOriginal = (dados.agendamentosCompletos || []).find((a: any) => String(a.id) === String(args.agendamentoId));
+
+        if (!agendamentoOriginal) {
+            console.log(`   ❌ Agendamento ${args.agendamentoId} não encontrado no contexto.`);
+            return {
+                mensagem: "❌ Não encontrei esse agendamento nos meus registros. Pode confirmar o horário?",
+                sucesso: false
+            };
+        }
+
+        console.log(`   ✅ Original: ${agendamentoOriginal.servico} (${agendamentoOriginal.data} ${agendamentoOriginal.hora})`);
+
+        // --- DEFINIR NOVOS DADOS (com fallback para o original) ---
+        let novadata = args.novadata || agendamentoOriginal.data;
+        let novahora = args.novahora;
+        let servico = agendamentoOriginal.servico;
+        let profissional = agendamentoOriginal.profissional;
+
+        if (!novahora) {
+            return {
+                mensagem: "❌ Para qual horário você gostaria de mudar?",
+                sucesso: false
+            };
+        }
+
+        // Formatação de data
+        let dataFormatada = novadata;
+        if (novadata && novadata.includes('/')) {
+            const [dia, mes, ano] = novadata.split('/');
+            dataFormatada = `${ano}-${mes}-${dia}`;
+        }
+
+        // 1. Tentar criar o NOVO agendamento primeiro (pra garantir a vaga)
+        console.log(`   Step 1: Criando novo agendamento (${dataFormatada} às ${novahora})...`);
+        const resultadoNovo = await tentarAgendar(
+            {
+                servico,
+                data: dataFormatada,
+                hora: novahora,
+                profissional
+            },
+            dados.companyId,
+            dados.clienteId,
+            dados.jid
+        );
+
+        if (resultadoNovo.status !== 'sucesso') {
+            console.log(`   ❌ Falha ao criar novo: ${resultadoNovo.mensagem}`);
+            return {
+                mensagem: `❌ Não consegui marcar para este novo horário: ${resultadoNovo.mensagem}`,
+                sucesso: false
+            };
+        }
+
+        // 2. Se deu certo, CANCELAR o antigo
+        console.log(`   Step 2: Novo OK! Cancelando antigo ID: ${args.agendamentoId}...`);
+        const resultadoCancel = await cancelarAgendamento(args.agendamentoId, dados.companyId, 'Remarcado pelo cliente');
+
+        if (resultadoCancel.status !== 'sucesso') {
+            console.log(`   ⚠️ Novo criado, mas falha ao cancelar antigo: ${resultadoCancel.mensagem}`);
+            // Aqui temos um "sucesso parcial". Vamos informar, mas tecnicamente a vaga nova foi garantida.
+            return {
+                mensagem: `✅ Novo horário agendado para ${novahora}!\n\n⚠️ Mas tive um erro ao desmarcar o antigo (${agendamentoOriginal.hora}). Por favor, peça ao atendente para remover o horário antigo manualmente.`,
+                sucesso: true
+            };
+        }
+
+        const [ano, mes, dia] = dataFormatada.split('-');
         return {
-            mensagem: '✅ Agendamento remarcado com sucesso!',
+            mensagem: `✅ Reagendamento realizado com sucesso!\n\n❌ O horário das ${agendamentoOriginal.hora} foi cancelado.\n✅ O novo horário é dia ${dia}/${mes} às ${novahora}.\n\nAté logo!`,
             sucesso: true
         };
+
     } catch (error) {
-        console.error(`Erro remarcarAgendamento:`, error);
+        console.error(`❌ Erro processarRemarcarAgendamento:`, error);
         return {
-            mensagem: 'Erro ao remarcar agendamento',
+            mensagem: '❌ Desculpe, tive um erro técnico ao processar seu reagendamento. Pode tentar novamente?',
             sucesso: false
         };
     }
@@ -680,21 +879,35 @@ const processarRemarcarAgendamento = async (args: any, dados: any) => {
 const processarAdicionarObservacao = async (args: any, dados: any) => {
     try {
         console.log(`   Adicionando observacao: ${args.observacao.substring(0, 30)}...`);
+        const resultado = await addObs(args.agendamentoId, dados.companyId, args.observacao);
+
+        if (resultado.status === 'sucesso') {
+            return {
+                mensagem: '✅ Observação adicionada ao seu agendamento!',
+                sucesso: true
+            };
+        }
+
         return {
-            mensagem: '✅ Observação registrada!',
-            sucesso: true
+            mensagem: '❌ Não consegui adicionar a observação.',
+            sucesso: false
         };
     } catch (error) {
         console.error(`Erro adicionarObservacao:`, error);
         return {
-            mensagem: 'Erro ao adicionar observacao',
+            mensagem: 'Erro ao adicionar observação',
             sucesso: false
         };
     }
 };
 
-export const limparMemoriaChat = (companyId: string, jid: string) => {
+export const limparMemoriaChat = async (companyId: string, jid: string) => {
     const memKey = `${companyId}_${jid}`;
+
+    // Limpar Banco
+    await excluirHistoricoBanco(companyId, jid);
+
+    // Limpar Memória
     if (chatsMemoria[memKey]) {
         delete chatsMemoria[memKey];
         console.log(`Memoria de chat limpa: ${memKey}`);

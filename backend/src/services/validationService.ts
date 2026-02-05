@@ -46,16 +46,16 @@ export const validarDiaAberto = async (
 
     // ✅ CRÍTICO: Se tá "FECHADO", retorna erro
     if (horarioDoDia === 'FECHADO' || !horarioDoDia) {
-      return { 
-        aberto: false, 
-        motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.` 
+      return {
+        aberto: false,
+        motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
       };
     }
 
     // ✅ VALIDAR SE HORÁRIO TÁ DENTRO DA ABERTURA (se informado)
     if (hora) {
       console.log(`   ⏰ Validando horário: ${hora}`);
-      
+
       const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
       const [horaFechamento, minFechamento] = horarioDoDia.split('-')[1].split(':').map(Number);
       const [horaAgendamento, minAgendamento] = hora.split(':').map(Number);
@@ -70,16 +70,16 @@ export const validarDiaAberto = async (
 
       // Se horário tá ANTES da abertura ou DEPOIS do fechamento
       if (minutoAgendamento < minutoAbertura) {
-        return { 
-          aberto: false, 
-          motivo: `Desculpa, abrimos às ${horarioDoDia.split('-')[0]} nesse dia. Escolha um horário após esse.` 
+        return {
+          aberto: false,
+          motivo: `Desculpa, abrimos às ${horarioDoDia.split('-')[0]} nesse dia. Escolha um horário após esse.`
         };
       }
 
       if (minutoAgendamento >= minutoFechamento) {
-        return { 
-          aberto: false, 
-          motivo: `Desculpa, fechamos às ${horarioDoDia.split('-')[1]} nesse dia. Escolha um horário antes disso.` 
+        return {
+          aberto: false,
+          motivo: `Desculpa, fechamos às ${horarioDoDia.split('-')[1]} nesse dia. Escolha um horário antes disso.`
         };
       }
 
@@ -177,18 +177,18 @@ export const validarHorarioDisponivel = async (
     // Se horário começa ANTES da abertura
     if (minutoAgendamento < minutoAbertura) {
       const horaAberturaFormatada = `${String(horaAbertura).padStart(2, '0')}:${String(minAbertura).padStart(2, '0')}`;
-      return { 
-        disponivel: false, 
-        motivo: `Desculpa, abrimos às ${horaAberturaFormatada} nesse dia.` 
+      return {
+        disponivel: false,
+        motivo: `Desculpa, abrimos às ${horaAberturaFormatada} nesse dia.`
       };
     }
 
     // Se horário termina DEPOIS do fechamento
     if (minutoTermino > minutoFechamento) {
       const horaFechamentoFormatada = `${String(horaFechamento).padStart(2, '0')}:${String(minFechamento).padStart(2, '0')}`;
-      return { 
-        disponivel: false, 
-        motivo: `Desculpa, fechamos às ${horaFechamentoFormatada} nesse dia. Esse horário não cabe.` 
+      return {
+        disponivel: false,
+        motivo: `Desculpa, fechamos às ${horaFechamentoFormatada} nesse dia. Esse horário não cabe.`
       };
     }
 
@@ -253,9 +253,9 @@ export const validarHorarioPassado = (
     const minutoMinimoFuturo = minutoAtual + 60; // 1 hora de antecedência
 
     if (minutoAgendamento <= minutoMinimoFuturo) {
-      return { 
-        valido: false, 
-        motivo: `Horário ${hora} já passou ou é muito próximo. Escolha um horário com pelo menos 1 hora de antecedência.` 
+      return {
+        valido: false,
+        motivo: `Horário ${hora} já passou ou é muito próximo. Escolha um horário com pelo menos 1 hora de antecedência.`
       };
     }
 
@@ -295,9 +295,9 @@ export const determinarPeriodosDisponiveis = async (
       if (horaFechamento > 18) periodos.push('noite');
 
       if (periodos.length === 0) {
-        return { 
-          periodos: ['manhã'], 
-          motivo: 'Apenas manhã está disponível nesse dia' 
+        return {
+          periodos: ['manhã'],
+          motivo: 'Apenas manhã está disponível nesse dia'
         };
       }
 
@@ -336,9 +336,9 @@ export const determinarPeriodosDisponiveis = async (
     }
 
     if (periodos.length === 0) {
-      return { 
-        periodos: [], 
-        motivo: 'Infelizmente não há horários disponíveis hoje. Gostaria de agendar para amanhã?' 
+      return {
+        periodos: [],
+        motivo: 'Infelizmente não há horários disponíveis hoje. Gostaria de agendar para amanhã?'
       };
     }
 
@@ -387,7 +387,14 @@ export const buscarHorariosDisponiveis = async (
       .eq('company_id', companyId)
       .neq('status', 'cancelado');
 
-    const horariosOcupados = (agendamentos || []).map((a: any) => a.hora_agendamento);
+    // ✅ CORREÇÃO: Formatar horários ocupados para HH:MM (removendo segundos se houver)
+    // E arredondar para baixo para bloquear o slot da grade (ex: 17:01 vira 17:00)
+    const horariosOcupados = (agendamentos || []).map((a: any) => {
+      if (typeof a.hora_agendamento !== 'string') return a.hora_agendamento;
+      const [h, m] = a.hora_agendamento.split(':').map(Number);
+      const mArredondado = m >= 30 ? 30 : 0;
+      return `${String(h).padStart(2, '0')}:${String(mArredondado).padStart(2, '0')}`;
+    });
 
     // ✅ CORRIGIDO: Usar horarioDoDia (ex: "09:00-18:00")
     const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
@@ -444,9 +451,9 @@ export const validarEspecialidade = (
       return { valido: true };
     }
 
-    return { 
-      valido: false, 
-      motivo: `${profissional.nome} não faz ${nomeServico}` 
+    return {
+      valido: false,
+      motivo: `${profissional.nome} não faz ${nomeServico}`
     };
   } catch (error) {
     console.error('❌ Erro validarEspecialidade:', error);
