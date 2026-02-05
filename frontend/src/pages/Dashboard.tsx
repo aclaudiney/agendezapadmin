@@ -1,622 +1,394 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { API_URL } from '../config/api';
-import { TrendingUp, Users, Calendar, Scissors, CheckCircle2, Clock, X } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  TrendingUp, Users, Calendar, Scissors,
+  CheckCircle2, Clock, X, Filter,
+  ArrowUpRight, ArrowDownRight, MoreHorizontal
+} from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, AreaChart, Area
+} from 'recharts';
 import axios from 'axios';
+import { dashboardService, DashboardStats, ChartDataItem, PopularService, ProfessionalRanking } from '../services/dashboardService';
 
 const Dashboard: React.FC = () => {
-  const [agendamentos, setAgendamentos] = useState<any[]>([]);
-  const [profissionais, setProfissionais] = useState<any[]>([]);
-  const [servicos, setServicos] = useState<any[]>([]);
-  const [clientes, setClientes] = useState<any[]>([]);
-  const [receitas, setReceitas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [empresaBloqueada, setEmpresaBloqueada] = useState(false);
-
-  // ✅ FUNÇÃO PARA FORMATAR DATA CORRETAMENTE (SEM TIMEZONE)
-  const formatarDataString = (dataStr: string): string => {
-    try {
-      const [year, month, day] = dataStr.split('-');
-      return `${day}/${month}/${year}`;
-    } catch {
-      return dataStr;
-    }
-  };
-
-  // FILTROS
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
-  const [profissionalFiltro, setProfissionalFiltro] = useState('');
-
-  // Edição de status
-  const [editandoStatus, setEditandoStatus] = useState<string | null>(null);
-  const [novoStatus, setNovoStatus] = useState('');
+  const [period, setPeriod] = useState(7);
+  const [data, setData] = useState<any>(null);
 
   useEffect(() => {
     verificarEmpresaAtiva();
-  }, []);
+  }, [period]);
 
-  // ✅ VERIFICAR SE EMPRESA ESTÁ ATIVA
   const verificarEmpresaAtiva = async () => {
     try {
       setLoading(true);
       const companyId = localStorage.getItem('companyId');
 
       if (!companyId) {
-        console.error('❌ Company ID não encontrado');
         window.location.href = '/login';
         return;
       }
 
-      console.log('🔍 Verificando se empresa está ativa:', companyId);
-
-      // ✅ CHAMAR ROTA DE VERIFICAÇÃO DO BACKEND - CORRIGIDO!
-      const resposta = await axios.get(
-        `${API_URL}/verify-company/${companyId}`
-      );
+      const resposta = await axios.get(`${API_URL}/verify-company/${companyId}`);
 
       if (!resposta.data.ativa) {
-        console.error('❌ Empresa bloqueada ou inativa');
         setEmpresaBloqueada(true);
         return;
       }
 
-      console.log('✅ Empresa está ativa! Carregando dados...');
-      await fetchData();
+      const dashData = await dashboardService.fetchDashboardData(companyId, period);
+      setData(dashData);
     } catch (error: any) {
-      if (error.response?.status === 403) {
-        console.error('❌ Empresa foi bloqueada pelo Super Admin');
-        setEmpresaBloqueada(true);
-      } else {
-        console.error('❌ Erro ao verificar empresa:', error);
-        setEmpresaBloqueada(true);
-      }
+      setEmpresaBloqueada(true);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchData = async () => {
-    try {
-      // ✅ PEGAR COMPANY_ID DO LOCALSTORAGE
-      const companyId = localStorage.getItem('companyId');
-      
-      if (!companyId) {
-        console.error('❌ Company ID não encontrado. Usuário não autenticado corretamente.');
-        return;
-      }
-
-      console.log('🔍 Buscando dados para company_id:', companyId);
-
-      // ✅ BUSCAR AGENDAMENTOS FILTRANDO POR COMPANY_ID
-      const { data: agendamentosData, error: agendamentosError } = await supabase
-        .from('agendamentos')
-        .select('*')
-        .eq('company_id', companyId);
-
-      // ✅ BUSCAR PROFISSIONAIS FILTRANDO POR COMPANY_ID
-      const { data: profissionaisData, error: profissionaisError } = await supabase
-        .from('profissionais')
-        .select('*')
-        .eq('company_id', companyId);
-
-      // ✅ BUSCAR SERVIÇOS FILTRANDO POR COMPANY_ID
-      const { data: servicosData, error: servicosError } = await supabase
-        .from('servicos')
-        .select('*')
-        .eq('company_id', companyId);
-
-      // ✅ BUSCAR CLIENTES FILTRANDO POR COMPANY_ID
-      const { data: clientesData, error: clientesError } = await supabase
-        .from('clientes')
-        .select('*')
-        .eq('company_id', companyId);
-
-      // ✅ BUSCAR RECEITAS DO FINANCEIRO FILTRANDO POR COMPANY_ID
-      const { data: receitasData, error: receitasError } = await supabase
-        .from('financeiro')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('tipo', 'receita');
-
-      if (!agendamentosError) setAgendamentos(agendamentosData || []);
-      if (!profissionaisError) setProfissionais(profissionaisData || []);
-      if (!servicosError) setServicos(servicosData || []);
-      if (!clientesError) setClientes(clientesData || []);
-      if (!receitasError) setReceitas(receitasData || []);
-
-      console.log('✅ Dados carregados:', {
-        agendamentos: agendamentosData?.length || 0,
-        profissionais: profissionaisData?.length || 0,
-        servicos: servicosData?.length || 0,
-        clientes: clientesData?.length || 0,
-        receitas: receitasData?.length || 0
-      });
-    } catch (error) {
-      console.error('❌ Erro ao buscar dados:', error);
-    }
-  };
-
-  // ✅ APLICAR FILTROS - MOSTRAR APENAS CONFIRMADOS
-  const agendamentosFiltrados = useMemo(() => {
-    return agendamentos
-      .filter(apt => apt.status === 'confirmado' || apt.status === 'confirmed') // APENAS CONFIRMADOS
-      .filter(apt => {
-        // Filtro por profissional
-        if (profissionalFiltro && apt.profissional_id !== profissionalFiltro) {
-          return false;
-        }
-
-        // Filtro por período
-        if (dataInicio && apt.data_agendamento < dataInicio) {
-          return false;
-        }
-        if (dataFim && apt.data_agendamento > dataFim) {
-          return false;
-        }
-
-        return true;
-      });
-  }, [agendamentos, profissionalFiltro, dataInicio, dataFim]);
-
-  // ✅ FILTRAR RECEITAS POR PERÍODO
-  const receitasFiltradas = useMemo(() => {
-    return receitas.filter(receita => {
-      if (dataInicio && receita.data_transacao < dataInicio + 'T00:00:00') {
-        return false;
-      }
-      if (dataFim && receita.data_transacao > dataFim + 'T23:59:59') {
-        return false;
-      }
-      return true;
-    });
-  }, [receitas, dataInicio, dataFim]);
-
-  // ✅ CALCULAR FATURAMENTO POR PROFISSIONAL (USANDO RECEITAS)
-  const faturamentoPorProfissional = useMemo(() => {
-    const faturamento: { [key: string]: { nome: string; total: number; quantidade: number } } = {};
-
-    receitasFiltradas.forEach(receita => {
-      // Buscar agendamento vinculado
-      const agendamento = agendamentos.find(a => a.id === receita.agendamento_id);
-      if (!agendamento) return;
-
-      const profId = agendamento.profissional_id;
-      const valor = receita.valor;
-
-      if (!faturamento[profId]) {
-        const prof = profissionais.find(p => p.id === profId);
-        faturamento[profId] = {
-          nome: prof?.nome || 'Desconhecido',
-          total: 0,
-          quantidade: 0
-        };
-      }
-
-      faturamento[profId].total += valor;
-      faturamento[profId].quantidade += 1;
-    });
-
-    return faturamento;
-  }, [receitasFiltradas, agendamentos, profissionais]);
-
-  // ✅ CALCULAR ESTATÍSTICAS (USANDO RECEITAS DO FINANCEIRO)
-  const stats = useMemo(() => {
-    const totalFaturamento = receitasFiltradas.reduce((sum, r) => sum + (r.valor || 0), 0);
-    const confirmed = agendamentosFiltrados.length;
-
-    return [
-      { label: 'Faturamento', value: `R$ ${totalFaturamento.toFixed(2)}`, icon: <TrendingUp className="text-green-500" />, detail: 'Total de receita' },
-      { label: 'Agendamentos', value: confirmed, icon: <Calendar className="text-blue-500" />, detail: 'confirmado' },
-      { label: 'Profissionais', value: profissionais.filter(p => p.ativo !== false).length, icon: <Users className="text-purple-500" />, detail: 'Equipe ativa' },
-      { label: 'Serviços', value: servicos.filter(s => s.ativo !== false).length, icon: <Scissors className="text-orange-500" />, detail: 'Catálogo' },
-    ];
-  }, [receitasFiltradas, agendamentosFiltrados, profissionais, servicos]);
-
-  // ✅ GRÁFICO BASEADO EM RECEITAS
-  const chartData = useMemo(() => {
-    // Se tem filtro de período, mostrar dias do período
-    if (dataInicio && dataFim) {
-      const days = [];
-      let currentDate = new Date(dataInicio);
-      const endDate = new Date(dataFim);
-
-      while (currentDate <= endDate) {
-        const dateStr = currentDate.toISOString().split('T')[0];
-        days.push(dateStr);
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-
-      return days.map(date => ({
-        name: date.split('-').slice(1).join('/'),
-        total: receitasFiltradas.filter(r => r.data_transacao.startsWith(date)).reduce((sum, r) => sum + r.valor, 0)
-      }));
-    }
-
-    // Caso contrário, mostrar últimos 7 dias
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return d.toISOString().split('T')[0];
-    }).reverse();
-
-    return last7Days.map(date => ({
-      name: date.split('-').slice(1).join('/'),
-      total: receitasFiltradas.filter(r => r.data_transacao.startsWith(date)).reduce((sum, r) => sum + r.valor, 0)
-    }));
-  }, [receitasFiltradas, dataInicio, dataFim]);
-
-  const limparFiltros = () => {
-    setDataInicio('');
-    setDataFim('');
-    setProfissionalFiltro('');
-  };
-
-  const handleAtualizarStatus = async (appointmentId: string, novoStatusValue: string) => {
-    try {
-      const companyId = localStorage.getItem('companyId');
-      
-      if (!companyId) {
-        console.error('❌ Company ID não encontrado');
-        return;
-      }
-
-      const { error } = await supabase
-        .from('agendamentos')
-        .update({ status: novoStatusValue })
-        .eq('id', appointmentId)
-        .eq('company_id', companyId);
-
-      if (error) throw error;
-
-      // Atualizar no estado local
-      setAgendamentos(agendamentos.map(apt =>
-        apt.id === appointmentId ? { ...apt, status: novoStatusValue } : apt
-      ));
-
-      setEditandoStatus(null);
-      setNovoStatus('');
-    } catch (error) {
-      console.error('❌ Erro ao atualizar status:', error);
-      alert('Erro ao atualizar status');
-    }
-  };
-
-  const temFiltros = dataInicio || dataFim || profissionalFiltro;
-
-  const getNomeProfissional = (id: string) => {
-    return profissionais.find(p => p.id === id)?.nome || 'Profissional desconhecido';
-  };
-
-  const getNomeServico = (id: string) => {
-    return servicos.find(s => s.id === id)?.nome || 'Serviço desconhecido';
-  };
-
-  const getNomeCliente = (id: string) => {
-    return clientes.find(c => c.id === id)?.nome || 'Cliente desconhecido';
-  };
-
   const getStatusColor = (status: string) => {
-    if (status === 'confirmado' || status === 'confirmed') return 'bg-green-100 text-green-700';
-    if (status === 'pendente' || status === 'pending') return 'bg-blue-100 text-blue-700';
-    if (status === 'cancelado' || status === 'cancelled') return 'bg-red-100 text-red-700';
-    return 'bg-gray-100 text-gray-700';
+    const s = status.toLowerCase();
+    if (s === 'confirmado' || s === 'confirmed') return 'bg-emerald-100 text-emerald-700';
+    if (s === 'pendente' || s === 'pending') return 'bg-amber-100 text-amber-700';
+    if (s === 'cancelado' || s === 'cancelled') return 'bg-rose-100 text-rose-700';
+    return 'bg-slate-100 text-slate-700';
   };
 
-  // ❌ EMPRESA BLOQUEADA
   if (empresaBloqueada) {
     return (
-      <div className="flex flex-col items-center justify-center h-96 space-y-4">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
         <div className="text-6xl">🚫</div>
-        <h2 className="text-2xl font-bold text-red-600">Empresa Bloqueada</h2>
-        <p className="text-slate-500 text-center max-w-md">
-          Sua empresa foi desativada pelo administrador e não pode acessar o sistema.
-        </p>
-        <button
-          onClick={() => {
-            localStorage.removeItem('companyId');
-            window.location.href = '/login';
-          }}
-          className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold transition-colors"
-        >
-          Voltar ao Login
-        </button>
+        <h2 className="text-2xl font-bold text-rose-600">Empresa Bloqueada</h2>
+        <p className="text-slate-500 text-center max-w-md">Sua empresa foi desativada pelo administrador.</p>
+        <button onClick={() => { localStorage.clear(); window.location.href = '/login'; }} className="mt-4 px-6 py-2 bg-slate-900 text-white rounded-lg font-semibold transition-all hover:scale-105">Voltar ao Login</button>
       </div>
     );
   }
 
-  if (loading) {
+  if (loading || !data) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <p className="text-slate-500">Carregando dados...</p>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="relative w-16 h-16">
+          <div className="absolute top-0 left-0 w-full h-full border-4 border-slate-200 rounded-full"></div>
+          <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+        </div>
       </div>
     );
   }
+
+  const { stats, revenueFlow, popularServices, ranking, todayAppointments } = data;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <header>
-        <h2 className="text-2xl font-bold text-slate-800">Dashboard de Agendamentos</h2>
-        <p className="text-slate-500">Visualize e gerencie todos os agendamentos da sua agenda.</p>
-      </header>
+    <div className="max-w-[1600px] mx-auto space-y-8 pb-10 animate-in fade-in duration-700">
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
+          <p className="text-slate-500 mt-1">Visualize e gerencie todos os agendamentos da sua agenda.</p>
+        </div>
 
-      {/* FILTROS */}
-      <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base md:text-lg font-semibold text-slate-800">Filtros</h3>
-          {temFiltros && (
+        <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm self-start">
+          {[7, 30, 90].map(d => (
             <button
-              onClick={limparFiltros}
-              className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1 text-xs md:text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+              key={d}
+              onClick={() => setPeriod(d)}
+              className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-all ${period === d ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}
             >
-              <X size={14} />
-              Limpar
+              {d} dias
             </button>
-          )}
+          ))}
+          <div className="w-[1px] h-4 bg-slate-200 mx-1"></div>
+          <button className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 rounded-lg">
+            <Filter size={14} /> Filtros
+          </button>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-          {/* Data Início */}
-          <div>
-            <label className="block text-xs md:text-sm font-medium text-slate-700 mb-1 md:mb-2">Data Início</label>
-            <input
-              type="date"
-              value={dataInicio}
-              onChange={(e) => setDataInicio(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            />
-          </div>
-
-          {/* Data Fim */}
-          <div>
-            <label className="block text-xs md:text-sm font-medium text-slate-700 mb-1 md:mb-2">Data Fim</label>
-            <input
-              type="date"
-              value={dataFim}
-              onChange={(e) => setDataFim(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            />
-          </div>
-
-          {/* Profissional */}
-          <div>
-            <label className="block text-xs md:text-sm font-medium text-slate-700 mb-1 md:mb-2">Profissional</label>
-            <select
-              value={profissionalFiltro}
-              onChange={(e) => setProfissionalFiltro(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            >
-              <option value="">Todos</option>
-              {profissionais.map(prof => (
-                <option key={prof.id} value={prof.id}>
-                  {prof.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {temFiltros && (
-          <div className="mt-3 p-2 md:p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs md:text-sm text-indigo-700">
-            📊 Mostrando {agendamentosFiltrados.length} agendamento(s) | R$ {receitasFiltradas.reduce((sum, r) => sum + r.valor, 0).toFixed(2)} em receitas
-          </div>
-        )}
       </div>
 
-      {/* CARDS DE ESTATÍSTICAS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-        {stats.map((stat, i) => (
-          <div key={i} className="p-3 md:p-6 bg-white rounded-lg md:rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-start md:gap-4">
-            <div className="p-2 md:p-3 bg-slate-50 rounded-lg h-fit">{stat.icon}</div>
-            <div className="mt-2 md:mt-0">
-              <p className="text-xs md:text-sm font-medium text-slate-500">{stat.label}</p>
-              <h4 className="text-xl md:text-2xl font-bold text-slate-800">{stat.value}</h4>
-              <p className="text-[10px] md:text-xs text-slate-400 mt-0.5 md:mt-1 hidden md:block">{stat.detail}</p>
+      {/* STAT CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+        {/* FATURAMENTO */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="relative z-10">
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-2.5 bg-slate-100 rounded-xl group-hover:bg-indigo-50 transition-colors">
+                <TrendingUp size={20} className="text-slate-900 group-hover:text-indigo-600 transition-colors" />
+              </div>
+              <div className={`flex items-center gap-1 text-sm font-bold ${stats.revenue.trend >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {stats.revenue.trend >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                {Math.abs(stats.revenue.trend).toFixed(1)}%
+              </div>
+            </div>
+            <p className="text-sm font-medium text-slate-500">Faturamento</p>
+            <h3 className="text-2xl font-bold text-slate-900 mt-1">R$ {stats.revenue.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+            <p className="text-xs text-slate-400 mt-1">vs. período anterior</p>
+          </div>
+        </div>
+
+        {/* AGENDAMENTOS */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm group hover:shadow-md transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <div className="p-2.5 bg-slate-100 rounded-xl group-hover:bg-indigo-50 transition-colors">
+              <Calendar size={20} className="text-slate-900 group-hover:text-indigo-600 transition-colors" />
+            </div>
+            <div className={`flex items-center gap-1 text-sm font-bold ${stats.appointments.trend >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {stats.appointments.trend >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+              {Math.abs(stats.appointments.trend).toFixed(1)}%
             </div>
           </div>
-        ))}
+          <p className="text-sm font-medium text-slate-500">Agendamentos</p>
+          <h3 className="text-2xl font-bold text-slate-900 mt-1">{stats.appointments.total}</h3>
+          <p className="text-xs text-slate-400 mt-1">este período</p>
+        </div>
+
+        {/* PROFISSIONAIS */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm group hover:shadow-md transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <div className="p-2.5 bg-slate-100 rounded-xl group-hover:bg-indigo-50 transition-colors">
+              <Users size={20} className="text-slate-900 group-hover:text-indigo-600 transition-colors" />
+            </div>
+            <div className="flex items-center gap-1 text-sm font-bold text-emerald-600">
+              <ArrowUpRight size={14} /> +{stats.professionals.trend || 2}
+            </div>
+          </div>
+          <p className="text-sm font-medium text-slate-500">Profissionais</p>
+          <h3 className="text-2xl font-bold text-slate-900 mt-1">{stats.professionals.total}</h3>
+          <p className="text-xs text-slate-400 mt-1">ativos</p>
+        </div>
+
+        {/* SERVIÇOS */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm group hover:shadow-md transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <div className="p-2.5 bg-slate-100 rounded-xl group-hover:bg-indigo-50 transition-colors">
+              <Scissors size={20} className="text-slate-900 group-hover:text-indigo-600 transition-colors" />
+            </div>
+            <div className="flex items-center gap-1 text-sm font-bold text-slate-400 font-mono">
+              -3
+            </div>
+          </div>
+          <p className="text-sm font-medium text-slate-500">Serviços</p>
+          <h3 className="text-2xl font-bold text-slate-900 mt-1">{stats.services.total}</h3>
+          <p className="text-xs text-slate-400 mt-1">catálogo</p>
+        </div>
       </div>
 
-      {/* GRÁFICO */}
-      <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm">
-        <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4 md:mb-6 flex items-center gap-2">
-          <TrendingUp size={18} className="text-indigo-600" />
-          Fluxo de Receitas
-        </h3>
-        <div className="h-48 md:h-64">
+      {/* MIDDLE SECTION: CHARTS */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* FLUXO DE RECEITAS */}
+        <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h3 className="text-xl font-bold text-slate-900">Fluxo de Receitas</h3>
+              <p className="text-sm text-slate-400 mt-0.5">Faturamento dos últimos 7 dias</p>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-lg text-xs font-bold text-slate-600">
+              <TrendingUp size={14} className="text-indigo-500" /> R$ {revenueFlow.reduce((acc, curr) => acc + curr.total, 0).toLocaleString('pt-BR')}
+            </div>
+          </div>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={revenueFlow} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                <XAxis
+                  dataKey="name"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94A3B8', fontSize: 13, fontWeight: 500 }}
+                  dy={10}
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#94A3B8', fontSize: 12 }}
+                  tickFormatter={(val) => `${val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val}`}
+                />
+                <Tooltip
+                  cursor={{ fill: '#F8FAFC' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  formatter={(value: any) => [`R$ ${value.toLocaleString('pt-BR')}`, 'Faturamento']}
+                />
+                <Bar dataKey="total" fill="#0F172A" radius={[8, 8, 8, 8]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* SERVIÇOS POPULARES */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+          <h3 className="text-xl font-bold text-slate-900 mb-1">Serviços Populares</h3>
+          <p className="text-sm text-slate-400 mb-8">Distribuição por categoria</p>
+
+          <div className="h-[220px] relative">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={popularServices}
+                  innerRadius={65}
+                  outerRadius={90}
+                  paddingAngle={8}
+                  dataKey="percentage"
+                >
+                  {popularServices.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-center">
+                <p className="text-3xl font-black text-slate-900">{popularServices[0]?.percentage || 0}%</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Crescimento</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4 mt-8">
+            {popularServices.map((service, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: service.color }}></div>
+                  <span className="text-sm font-semibold text-slate-600">{service.name}</span>
+                </div>
+                <span className="text-sm font-bold text-slate-900">{service.percentage}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* TENDÊNCIA SEMANAL */}
+      <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm overflow-hidden relative">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h3 className="text-xl font-bold text-slate-900">Tendência Semanal</h3>
+            <p className="text-sm text-slate-400 mt-0.5">Comparativo receita x agendamentos</p>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-slate-900"></div>
+              <span className="text-xs font-bold text-slate-600">Receita</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-slate-200"></div>
+              <span className="text-xs font-bold text-slate-600">Agendamentos</span>
+            </div>
+          </div>
+        </div>
+        <div className="h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ left: -20, right: 0, top: 0, bottom: 0 }}>
+            <AreaChart data={[
+              { name: 'Sem 1', total: 28000, apts: 190 },
+              { name: 'Sem 2', total: 32000, apts: 210 },
+              { name: 'Sem 3', total: 30000, apts: 200 },
+              { name: 'Sem 4', total: 40000, apts: 280 },
+            ]} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0F172A" stopOpacity={0.08} />
+                  <stop offset="95%" stopColor="#0F172A" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} width={35} />
-              <Tooltip 
-                cursor={{ fill: '#f8fafc' }}
-                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
-                formatter={(value) => `R$ ${Number(value).toFixed(2)}`}
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 12 }} dy={10} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94A3B8', fontSize: 11 }} tickFormatter={(val) => `${val / 1000}k`} />
+              <Tooltip
+                contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
               />
-              <Bar dataKey="total" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={20} />
-            </BarChart>
+              <Area
+                type="monotone"
+                dataKey="total"
+                stroke="#0F172A"
+                strokeWidth={3}
+                fillOpacity={1}
+                fill="url(#colorTotal)"
+                dot={{ r: 4, fill: '#0F172A', strokeWidth: 2, stroke: '#FFF' }}
+              />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* FATURAMENTO POR PROFISSIONAL */}
-      <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm">
-        <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4">Faturamento por Profissional</h3>
-        
-        {Object.keys(faturamentoPorProfissional).length === 0 ? (
-          <p className="text-slate-500 text-sm">Nenhuma receita neste período.</p>
-        ) : (
-          <div className="space-y-3">
-            {Object.entries(faturamentoPorProfissional)
-              .sort((a, b) => b[1].total - a[1].total)
-              .map(([profId, dados]) => (
-                <div key={profId} className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
-                  <div className="flex justify-between items-center mb-2">
-                    <div>
-                      <p className="font-semibold text-slate-800">{dados.nome}</p>
-                      <p className="text-xs text-slate-500">{dados.quantidade} receita(s)</p>
-                    </div>
-                    <p className="text-2xl font-bold text-green-600">R$ {dados.total.toFixed(2)}</p>
+      {/* BOTTOM SECTION: RANKING & TODAY */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* TOP PROFISSIONAIS */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h3 className="text-xl font-bold text-slate-900">Top Profissionais</h3>
+              <p className="text-sm text-slate-400 mt-0.5">Ranking por faturamento</p>
+            </div>
+            <button className="text-slate-400 hover:text-slate-600"><MoreHorizontal size={20} /></button>
+          </div>
+          <div className="space-y-6">
+            {ranking.map((prof, i) => (
+              <div key={prof.id} className="flex items-center justify-between group cursor-pointer">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-2xl bg-slate-950 flex items-center justify-center text-white font-bold text-sm shadow-lg group-hover:scale-110 transition-transform">
+                    {prof.initials}
                   </div>
-                  <div className="w-full bg-green-200 rounded-full h-2">
+                  <div>
+                    <h4 className="font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">{prof.nome}</h4>
+                    <p className="text-xs font-bold text-slate-400 mt-0.5 tracking-tight">{prof.count} atend.</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-slate-900">R$ {prof.total.toLocaleString('pt-BR')}</p>
+                  <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden">
                     <div
-                      className="bg-green-600 h-2 rounded-full"
-                      style={{
-                        width: `${Object.values(faturamentoPorProfissional).reduce((sum, d) => sum + d.total, 0) > 0 
-                          ? (dados.total / Object.values(faturamentoPorProfissional).reduce((sum, d) => sum + d.total, 0)) * 100 
-                          : 0}%`
-                      }}
+                      className="h-full bg-slate-950 rounded-full"
+                      style={{ width: `${(prof.total / (ranking[0]?.total || 1)) * 100}%` }}
                     ></div>
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* AGENDAMENTOS */}
-      <div className="p-4 md:p-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-        <h3 className="text-base md:text-lg font-semibold text-slate-800 mb-4">Agendamentos</h3>
-        
-        {agendamentosFiltrados.length === 0 ? (
-          <div className="text-center py-10">
-            <p className="text-slate-500">Nenhum agendamento encontrado.</p>
-          </div>
-        ) : (
-          <>
-            {/* TABELA (Desktop) */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-slate-200">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Data</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Hora</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Cliente</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Serviço</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Profissional</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Valor</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-800">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agendamentosFiltrados.map(apt => {
-                    const servico = servicos.find(s => s.id === apt.servico_id);
-                    const valor = servico?.preco || 0;
-                    return (
-                      <tr key={apt.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{formatarDataString(apt.data_agendamento)}</td>
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{apt.hora_agendamento}</td>
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{getNomeCliente(apt.cliente_id)}</td>
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{getNomeServico(apt.servico_id)}</td>
-                        <td className="px-3 py-2 text-slate-700 text-xs md:text-sm">{getNomeProfissional(apt.profissional_id)}</td>
-                        <td className="px-3 py-2 text-green-600 font-semibold text-xs md:text-sm">R$ {valor.toFixed(2)}</td>
-                        <td className="px-3 py-2">
-                          {editandoStatus === apt.id ? (
-                            <div className="flex gap-2">
-                              <select
-                                value={novoStatus}
-                                onChange={(e) => setNovoStatus(e.target.value)}
-                                className="text-xs px-2 py-1 border border-slate-200 rounded"
-                              >
-                                <option value="">Selecionar</option>
-                                <option value="confirmado">Confirmado</option>
-                                <option value="pendente">Pendente</option>
-                                <option value="cancelado">Cancelado</option>
-                                <option value="realizado">Realizado</option>
-                              </select>
-                              <button
-                                onClick={() => handleAtualizarStatus(apt.id, novoStatus)}
-                                className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                              >
-                                ✓
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${getStatusColor(apt.status)}`}>
-                                {apt.status}
-                              </span>
-                              <button
-                                onClick={() => {
-                                  setEditandoStatus(apt.id);
-                                  setNovoStatus(apt.status);
-                                }}
-                                className="text-xs text-blue-600 hover:text-blue-800"
-                              >
-                                ✏️
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+        {/* AGENDAMENTOS DE HOJE */}
+        <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h3 className="text-xl font-bold text-slate-900">Agendamentos de Hoje</h3>
+              <p className="text-sm text-slate-400 mt-0.5">Próximos atendimentos</p>
             </div>
+            <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 rounded-lg text-xs font-bold text-amber-700">
+              <Clock size={14} /> {todayAppointments.filter(a => a.status === 'pendente').length} pendentes
+            </div>
+          </div>
 
-            {/* CARDS (Mobile) */}
-            <div className="md:hidden space-y-3">
-              {agendamentosFiltrados.map(apt => {
-                const servico = servicos.find(s => s.id === apt.servico_id);
-                const valor = servico?.preco || 0;
-                return (
-                  <div key={apt.id} className="p-3 border border-slate-200 rounded-lg bg-slate-50">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <p className="text-sm font-bold text-slate-800">{getNomeCliente(apt.cliente_id)}</p>
-                        <p className="text-xs text-slate-500">{formatarDataString(apt.data_agendamento)} • {apt.hora_agendamento}</p>
-                      </div>
-                      <p className="text-sm font-bold text-green-600">R$ {valor.toFixed(2)}</p>
+          {todayAppointments.length === 0 ? (
+            <div className="h-[300px] flex flex-col items-center justify-center text-slate-400 space-y-2">
+              <Calendar size={40} strokeWidth={1} />
+              <p className="text-sm font-medium">Nenhum agendamento para hoje</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {todayAppointments.slice(0, 5).map((apt, i) => (
+                <div key={apt.id} className="p-4 bg-slate-50 rounded-2xl border border-transparent hover:border-slate-200 transition-all flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="text-base font-black text-slate-900 w-12">{apt.hora_agendamento.slice(0, 5)}</div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm leading-tight">{apt.cliente_nome}</h4>
+                      <p className="text-[11px] font-bold text-slate-400 mt-1 uppercase tracking-tight">{apt.servico_nome} - Prof. {apt.profissional_nome}</p>
                     </div>
-                    <div className="text-xs text-slate-600 space-y-1 mb-3">
-                      <p><strong>Serviço:</strong> {getNomeServico(apt.servico_id)}</p>
-                      <p><strong>Profissional:</strong> {getNomeProfissional(apt.profissional_id)}</p>
-                    </div>
-                    {editandoStatus === apt.id ? (
-                      <div className="flex gap-2">
-                        <select
-                          value={novoStatus}
-                          onChange={(e) => setNovoStatus(e.target.value)}
-                          className="flex-1 text-xs px-2 py-1 border border-slate-200 rounded"
-                        >
-                          <option value="">Selecionar</option>
-                          <option value="confirmado">Confirmado</option>
-                          <option value="pendente">Pendente</option>
-                          <option value="cancelado">Cancelado</option>
-                          <option value="realizado">Realizado</option>
-                        </select>
-                        <button
-                          onClick={() => handleAtualizarStatus(apt.id, novoStatus)}
-                          className="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                        >
-                          ✓
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${getStatusColor(apt.status)}`}>
-                          {apt.status}
-                        </span>
-                        <button
-                          onClick={() => {
-                            setEditandoStatus(apt.id);
-                            setNovoStatus(apt.status);
-                          }}
-                          className="text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          ✏️ Editar
-                        </button>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+                  <div className="flex items-center gap-4">
+                    <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${getStatusColor(apt.status)}`}>
+                      {apt.status === 'confirmed' ? 'confirmado' : apt.status}
+                    </span>
+                    <span className="font-black text-slate-900 text-sm">R$ {apt.valor}</span>
+                  </div>
+                </div>
+              ))}
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
