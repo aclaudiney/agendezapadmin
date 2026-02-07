@@ -50,7 +50,7 @@ const FollowUpPage: React.FC = () => {
             }
         } catch (error) {
             console.error('Erro ao buscar configurações:', error);
-            setMessage({ text: 'Erro ao carregar configurações.', type: 'error' });
+            setMessage({ text: 'Erro Conecte o Whatsapp.', type: 'error' });
         } finally {
             setLoading(false);
         }
