@@ -34,6 +34,7 @@ const Appointments: React.FC = () => {
   const [showEditProfissionalModal, setShowEditProfissionalModal] = useState(false);
   const [agendamentoEditandoProfissional, setAgendamentoEditandoProfissional] = useState<any>(null);
   const [novoProfissionalId, setNovoProfissionalId] = useState('');
+  const [novoServicoId, setNovoServicoId] = useState('');
 
   // Estado para edição de status
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -57,6 +58,7 @@ const Appointments: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      const CACHE_TTL_MS = 120000;
 
       // ✅ PEGAR COMPANY_ID DO LOCALSTORAGE
       const companyId = localStorage.getItem('companyId');
@@ -68,18 +70,48 @@ const Appointments: React.FC = () => {
 
       console.log('🔍 Buscando dados para company_id:', companyId);
 
+      try {
+        const cacheA = localStorage.getItem(`cache_agendamentos_${companyId}`);
+        const cacheC = localStorage.getItem(`cache_clientes_${companyId}`);
+        const cacheP = localStorage.getItem(`cache_profissionais_${companyId}`);
+        const cacheS = localStorage.getItem(`cache_servicos_${companyId}`);
+        const now = Date.now();
+        const parsedA = cacheA ? JSON.parse(cacheA) : null;
+        const parsedC = cacheC ? JSON.parse(cacheC) : null;
+        const parsedP = cacheP ? JSON.parse(cacheP) : null;
+        const parsedS = cacheS ? JSON.parse(cacheS) : null;
+        if (parsedA && now - (parsedA.ts || 0) < CACHE_TTL_MS) setAgendamentos(parsedA.data || []);
+        if (parsedC && now - (parsedC.ts || 0) < CACHE_TTL_MS) setClientes(parsedC.data || []);
+        if (parsedP && now - (parsedP.ts || 0) < CACHE_TTL_MS) setProfissionais(parsedP.data || []);
+        if (parsedS && now - (parsedS.ts || 0) < CACHE_TTL_MS) setServicos(parsedS.data || []);
+      } catch {}
+
       // ✅ BUSCAR DADOS FILTRANDO POR COMPANY_ID
       const [agendamentosRes, clientesRes, profissionaisRes, servicosRes] = await Promise.all([
-        supabase.from('agendamentos').select('*').eq('company_id', companyId),
-        supabase.from('clientes').select('*').eq('company_id', companyId),
-        supabase.from('profissionais').select('*').eq('company_id', companyId),
-        supabase.from('servicos').select('*').eq('company_id', companyId),
+        supabase.from('agendamentos')
+          .select('id, cliente_id, profissional_id, servico_id, data_agendamento, hora_agendamento, status, origem, forma_pagamento, valor_pago, data_pagamento, company_id, created_at')
+          .eq('company_id', companyId),
+        supabase.from('clientes')
+          .select('id, nome, telefone')
+          .eq('company_id', companyId),
+        supabase.from('profissionais')
+          .select('id, nome, ativo, especialidade')
+          .eq('company_id', companyId),
+        supabase.from('servicos')
+          .select('id, nome, preco, duracao, ativo')
+          .eq('company_id', companyId),
       ]);
 
       setAgendamentos(agendamentosRes.data || []);
       setClientes(clientesRes.data || []);
       setProfissionais(profissionaisRes.data || []);
       setServicos(servicosRes.data || []);
+      try {
+        localStorage.setItem(`cache_agendamentos_${companyId}`, JSON.stringify({ ts: Date.now(), data: agendamentosRes.data || [] }));
+        localStorage.setItem(`cache_clientes_${companyId}`, JSON.stringify({ ts: Date.now(), data: clientesRes.data || [] }));
+        localStorage.setItem(`cache_profissionais_${companyId}`, JSON.stringify({ ts: Date.now(), data: profissionaisRes.data || [] }));
+        localStorage.setItem(`cache_servicos_${companyId}`, JSON.stringify({ ts: Date.now(), data: servicosRes.data || [] }));
+      } catch {}
 
       console.log('✅ Dados carregados');
     } catch (error) {
@@ -216,6 +248,10 @@ const Appointments: React.FC = () => {
         setErro('Selecione um profissional');
         return;
       }
+      if (!novoServicoId) {
+        setErro('Selecione um serviço');
+        return;
+      }
 
       const companyId = localStorage.getItem('companyId');
       if (!companyId) {
@@ -223,31 +259,44 @@ const Appointments: React.FC = () => {
         return;
       }
 
+      const profissionalSel = profissionais.find(p => p.id === novoProfissionalId);
+      const servicoSel = servicos.find(s => s.id === novoServicoId);
+      if (profissionalSel && servicoSel && profissionalSel.especialidade) {
+        const esp = String(profissionalSel.especialidade || '').toLowerCase();
+        const nomeServico = String(servicoSel.nome || '').toLowerCase();
+        if (!esp.includes(nomeServico)) {
+          setErro(`${profissionalSel.nome} não realiza "${servicoSel.nome}"`);
+          return;
+        }
+      }
+
       const { error } = await supabase
         .from('agendamentos')
-        .update({ profissional_id: novoProfissionalId })
+        .update({ profissional_id: novoProfissionalId, servico_id: novoServicoId })
         .eq('id', agendamentoEditandoProfissional.id)
         .eq('company_id', companyId);
 
       if (error) {
         console.error('❌ Erro ao atualizar profissional:', error);
-        setErro('Erro ao salvar profissional');
+        setErro('Erro ao salvar alterações');
         return;
       }
 
       setAgendamentos(agendamentos.map(apt =>
         apt.id === agendamentoEditandoProfissional.id 
-          ? { ...apt, profissional_id: novoProfissionalId }
+          ? { ...apt, profissional_id: novoProfissionalId, servico_id: novoServicoId }
           : apt
       ));
 
-      setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
-      setFormaPagamento("");
-      setShowPagamentoModal(true);
+      const editedId = agendamentoEditandoProfissional.id;
+      const currentStatus = agendamentos.find(a => a.id === editedId)?.status || 'pendente';
       setShowEditProfissionalModal(false);
       setAgendamentoEditandoProfissional(null);
       setNovoProfissionalId('');
+      setNovoServicoId('');
       setErro('');
+      setEditandoId(editedId);
+      setNovoStatus(currentStatus || '');
     } catch (error: any) {
       console.error('❌ Erro:', error);
       setErro(error?.message || 'Erro ao salvar');
@@ -608,9 +657,20 @@ const Appointments: React.FC = () => {
                           </span>
                           <button
                             onClick={() => {
+                              setEditandoId(apt.id);
+                              setNovoStatus(apt.status || '');
+                            }}
+                            className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
+                            title="Editar status"
+                          >
+                            <MoreVertical size={14} />
+                          </button>
+                          <button
+                            onClick={() => {
                               setShowEditProfissionalModal(true);
                               setAgendamentoEditandoProfissional(apt);
                               setNovoProfissionalId(apt.profissional_id || '');
+                              setNovoServicoId(apt.servico_id || '');
                             }}
                             className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
                             title="Editar profissional"
@@ -843,13 +903,10 @@ const Appointments: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-300">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-bold text-slate-800">Editar Profissional</h3>
+              <h3 className="text-2xl font-bold text-slate-800">Editar Agendamento</h3>
               <button 
                 onClick={() => {
-                  setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
-      setFormaPagamento("");
-      setShowPagamentoModal(true);
-      setShowEditProfissionalModal(false);
+                  setShowEditProfissionalModal(false);
                   setAgendamentoEditandoProfissional(null);
                   setNovoProfissionalId('');
                 }}
@@ -889,15 +946,33 @@ const Appointments: React.FC = () => {
               </select>
             </div>
 
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Serviço *</label>
+              <select
+                value={novoServicoId}
+                onChange={(e) => setNovoServicoId(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                required
+              >
+                <option value="">Selecione um serviço</option>
+                {servicos.map(s => (
+                  <option key={s.id} value={s.id}>{s.nome} - R$ {s.preco?.toFixed(2) || '0.00'}</option>
+                ))}
+              </select>
+              <div className="mt-2 text-xs text-slate-500">
+                Valor: <span className="font-semibold text-green-600">
+                  R$ {servicos.find(s => s.id === novoServicoId)?.preco?.toFixed(2) || '0.00'}
+                </span>
+              </div>
+            </div>
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
-                  setAgendamentoSelecionado({ ...agendamentoEditandoProfissional, profissional_id: novoProfissionalId });
-      setFormaPagamento("");
-      setShowPagamentoModal(true);
-      setShowEditProfissionalModal(false);
+                  setShowEditProfissionalModal(false);
                   setAgendamentoEditandoProfissional(null);
                   setNovoProfissionalId('');
+                  setNovoServicoId('');
                 }}
                 className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors"
               >
@@ -905,7 +980,7 @@ const Appointments: React.FC = () => {
               </button>
               <button
                 onClick={handleSalvarProfissional}
-                disabled={!novoProfissionalId}
+                disabled={!novoProfissionalId || !novoServicoId}
                 className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 <Check size={18} />

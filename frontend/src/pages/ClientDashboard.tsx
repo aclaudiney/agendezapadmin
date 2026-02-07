@@ -87,7 +87,7 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ clienteId, onLogout }
 
       const { data: agendamentosData, error: agendError } = await supabase
         .from('agendamentos')
-        .select('*')
+        .select('id, data_agendamento, hora_agendamento, status, servico_id, profissional_id, company_id, created_at')
         .eq('cliente_id', clienteId)
         .eq('company_id', companyId)
         .order('data_agendamento', { ascending: true });
@@ -100,30 +100,30 @@ const ClientDashboard: React.FC<ClientDashboardProps> = ({ clienteId, onLogout }
         return;
       }
 
-      const { data: servicosData } = await supabase
-        .from('servicos')
-        .select('*')
-        .eq('company_id', companyId);
+      const [servicosRes, profissionaisRes, configRes] = await Promise.all([
+        supabase
+          .from('servicos')
+          .select('id, nome, preco, duracao_minutos, ativo')
+          .eq('company_id', companyId),
+        supabase
+          .from('profissionais')
+          .select('id, nome, ativo')
+          .eq('company_id', companyId),
+        supabase
+          .from('configuracoes')
+          .select('*')
+          .eq('company_id', companyId)
+          .single()
+      ]);
 
-      const { data: profissionaisData } = await supabase
-        .from('profissionais')
-        .select('*')
-        .eq('company_id', companyId);
+      setServicos(servicosRes.data || []);
+      setProfissionais(profissionaisRes.data || []);
+      setConfig(configRes.data || null);
 
-      const { data: configData } = await supabase
-        .from('configuracoes')
-        .select('*')
-        .eq('company_id', companyId)
-        .single();
-
-      setServicos(servicosData || []);
-      setProfissionais(profissionaisData || []);
-      setConfig(configData);
-
-      const agendamentosCompletos = agendamentosData.map(apt => ({
+      const agendamentosCompletos = (agendamentosData || []).map(apt => ({
         ...apt,
-        servicos: servicosData?.find(s => s.id === apt.servico_id),
-        profissionais: profissionaisData?.find(p => p.id === apt.profissional_id),
+        servicos: (servicosRes.data || []).find(s => s.id === apt.servico_id),
+        profissionais: (profissionaisRes.data || []).find(p => p.id === apt.profissional_id),
       }));
 
       console.log('✅ Agendamentos completos:', agendamentosCompletos);

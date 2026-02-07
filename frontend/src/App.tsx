@@ -1,30 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { X } from 'lucide-react';
 
-// ✅ PÁGINAS ANTIGAS
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Appointments from './pages/Appointments';
-import Agents from './pages/Agents';
-import Services from './pages/Services';
-import Professionals from './pages/Professionals';
-import Clients from './pages/Clients';
-import Settings from './pages/Settings';
-import PaginaLoja from './pages/PaginaLoja';
-import Financeiro from './pages/Financeiro';
-import PublicBooking from './pages/PublicBooking';
-import ClientLogin from './pages/ClientLogin';
-import ClientDashboard from './pages/ClientDashboard';
-import WhatsAppSim from './components/WhatsAppSim';
-import WhatsappConfig from './pages/WhatsappConfig';
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Appointments = lazy(() => import('./pages/Appointments'));
+const Agents = lazy(() => import('./pages/Agents'));
+const Services = lazy(() => import('./pages/Services'));
+const Professionals = lazy(() => import('./pages/Professionals'));
+const Clients = lazy(() => import('./pages/Clients'));
+const Settings = lazy(() => import('./pages/Settings'));
+const PaginaLoja = lazy(() => import('./pages/PaginaLoja'));
+const Financeiro = lazy(() => import('./pages/Financeiro'));
+const PublicBooking = lazy(() => import('./pages/PublicBooking'));
+const ClientLogin = lazy(() => import('./pages/ClientLogin'));
+const ClientDashboard = lazy(() => import('./pages/ClientDashboard'));
+const WhatsAppSim = lazy(() => import('./components/WhatsAppSim'));
+const WhatsappConfig = lazy(() => import('./pages/WhatsappConfig'));
+const FollowUpPage = lazy(() => import('./pages/FollowUpPage'));
 
 // ✅ PÁGINAS ADMIN (COM SIDEBAR!)
-import AdminDashboard from './pages/admin/AdminDashboard';
-import AdminCRMPage from './pages/admin/AdminCRMPage';
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const AdminCRMPage = lazy(() => import('./pages/admin/AdminCRMPage'));
 
 // ✅ LAYOUTS
 import AdminLayout from './components/layouts/AdminLayout';
 import MainLayout from './components/layouts/MainLayout';
+import { supabase } from './services/supabaseClient';
+import { dashboardService } from './services/dashboardService';
 
 // ============================================
 // APP PRINCIPAL - ✅ COM SIDEBAR ADMIN
@@ -38,6 +40,7 @@ const App: React.FC = () => {
   const [showTester, setShowTester] = useState(false);
   const [loading, setLoading] = useState(true);
   const [clienteLogado, setClienteLogado] = useState<any>(null);
+  const CACHE_TTL_MS = 120000;
 
   // ✅ CARREGAR DADOS DO LOCALSTORAGE
   useEffect(() => {
@@ -103,6 +106,57 @@ const App: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const prefetchCommonData = async () => {
+      try {
+        const companyId = localStorage.getItem('companyId');
+        if (!companyId) return;
+        const now = Date.now();
+
+        const profKey = `cache_profissionais_${companyId}`;
+        const servKey = `cache_servicos_${companyId}`;
+        const cliKey = `cache_clientes_${companyId}`;
+        const dashKey = `cache_dashboard_${companyId}_30_all`;
+
+        const profCache = localStorage.getItem(profKey);
+        const servCache = localStorage.getItem(servKey);
+        const cliCache = localStorage.getItem(cliKey);
+        const dashCache = localStorage.getItem(dashKey);
+
+        const needProfs = !profCache || now - (JSON.parse(profCache).ts || 0) > CACHE_TTL_MS;
+        const needServs = !servCache || now - (JSON.parse(servCache).ts || 0) > CACHE_TTL_MS;
+        const needClients = !cliCache || now - (JSON.parse(cliCache).ts || 0) > CACHE_TTL_MS;
+        const needDash = !dashCache || now - (JSON.parse(dashCache).ts || 0) > CACHE_TTL_MS;
+
+        await Promise.all([
+          needProfs
+            ? supabase.from('profissionais').select('id, nome, ativo').eq('company_id', companyId).then(res => {
+                localStorage.setItem(profKey, JSON.stringify({ ts: now, data: res.data || [] }));
+              })
+            : Promise.resolve(),
+          needServs
+            ? supabase.from('servicos').select('id, nome, preco, duracao, ativo').eq('company_id', companyId).then(res => {
+                localStorage.setItem(servKey, JSON.stringify({ ts: now, data: res.data || [] }));
+              })
+            : Promise.resolve(),
+          needClients
+            ? supabase.from('clientes').select('id, nome, telefone, data_nascimento, ativo').eq('company_id', companyId).then(res => {
+                localStorage.setItem(cliKey, JSON.stringify({ ts: now, data: res.data || [] }));
+              })
+            : Promise.resolve(),
+          needDash
+            ? dashboardService.fetchDashboardData(companyId, 30).then(data => {
+                localStorage.setItem(dashKey, JSON.stringify({ ts: now, data }));
+              })
+            : Promise.resolve()
+        ]);
+      } catch {}
+    };
+    if (autenticado && userRole === 'empresa') {
+      prefetchCommonData();
+    }
+  }, [autenticado, userRole]);
+
   const handleLogout = () => {
     localStorage.removeItem('usuario');
     localStorage.removeItem('autenticado');
@@ -139,6 +193,7 @@ const App: React.FC = () => {
       case 'financeiro': return <Financeiro />;
       case 'whatsapp': return <WhatsappConfig />;
       case 'settings': return <Settings />;
+      case 'follow-up': return <FollowUpPage />; // ✅ NOVA ROTA
       default: return <Dashboard />;
     }
   };
@@ -193,7 +248,11 @@ const App: React.FC = () => {
   if (isPublicBooking) {
     let slug = pathname.replace('/agendar/', '').replace(/^\//, '').replace(/\/$/, '');
     console.log('📱 Abrindo PublicBooking com slug:', slug);
-    return <PublicBooking slug={slug} />;
+    return (
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+        <PublicBooking slug={slug} />
+      </Suspense>
+    );
   }
 
   if (pathname === '/login-cliente') {
@@ -201,7 +260,11 @@ const App: React.FC = () => {
       window.location.href = '/meu-agendamento';
       return null;
     }
-    return <ClientLogin onLoginSuccess={handleClientLoginSuccess} />;
+    return (
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+        <ClientLogin onLoginSuccess={handleClientLoginSuccess} />
+      </Suspense>
+    );
   }
 
   if (pathname === '/meu-agendamento') {
@@ -216,7 +279,11 @@ const App: React.FC = () => {
     try {
       const clienteData = JSON.parse(clienteSalvo);
       console.log('✅ ClientDashboard carregando com cliente:', clienteData.nome);
-      return <ClientDashboard clienteId={clienteData.id} onLogout={handleClientLogout} />;
+      return (
+        <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+          <ClientDashboard clienteId={clienteData.id} onLogout={handleClientLogout} />
+        </Suspense>
+      );
     } catch (error) {
       console.error('Erro ao parsear cliente:', error);
       window.location.href = '/login-cliente';
@@ -229,7 +296,11 @@ const App: React.FC = () => {
   // ============================================
 
   if (!autenticado) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="w-10 h-10 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+        <Login onLoginSuccess={handleLoginSuccess} />
+      </Suspense>
+    );
   }
 
   // ✅ ADMIN - COM SIDEBAR!
@@ -240,7 +311,9 @@ const App: React.FC = () => {
         onNavigate={setAdminActivePage}
         onLogout={handleLogout}
       >
-        {renderAdminPage()}
+        <Suspense fallback={<div className="p-6"><div className="w-8 h-8 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+          {renderAdminPage()}
+        </Suspense>
       </AdminLayout>
     );
   }
@@ -261,7 +334,9 @@ const App: React.FC = () => {
         </div>
 
         <div className="max-w-6xl mx-auto">
-          {renderPage()}
+          <Suspense fallback={<div className="p-6"><div className="w-8 h-8 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div></div>}>
+            {renderPage()}
+          </Suspense>
         </div>
 
         {showTester && (

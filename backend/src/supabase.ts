@@ -645,5 +645,99 @@ export const db = {
             console.error("❌ Erro crítico atualizarSessionWhatsApp:", error.message);
             return null;
         }
+    },
+
+    // ============================================
+    // 🔔 FUNÇÕES DE FOLLOW-UP (CONFIG & LOGS)
+    // ============================================
+
+    async getFollowUpSettings(companyId: string) {
+        try {
+            const { data, error } = await supabase
+                .from('follow_up_settings')
+                .select('*')
+                .eq('company_id', companyId)
+                .single();
+
+            if (error && error.code !== 'PGRST116') { // PGRST116 = JSON object requested, multiple (or no) results returned
+                console.error("❌ Erro getFollowUpSettings:", error.message);
+                return null;
+            }
+
+            return data;
+        } catch (error: any) {
+            console.error("❌ Erro crítico getFollowUpSettings:", error.message);
+            return null;
+        }
+    },
+
+    async updateFollowUpSettings(companyId: string, settings: any) {
+        try {
+            const { data, error } = await supabase
+                .from('follow_up_settings')
+                .upsert({
+                    company_id: companyId,
+                    ...settings,
+                    updated_at: new Date()
+                }, { onConflict: 'company_id' })
+                .select()
+                .single();
+
+            if (error) {
+                console.error("❌ Erro updateFollowUpSettings:", error.message);
+                return null;
+            }
+
+            return data;
+        } catch (error: any) {
+            console.error("❌ Erro crítico updateFollowUpSettings:", error.message);
+            return null;
+        }
+    },
+
+    async logFollowUpMessage(companyId: string, appointmentId: string, type: string, status: string = 'sent') {
+        try {
+            const { data, error } = await supabase
+                .from('follow_up_messages')
+                .insert([{
+                    company_id: companyId,
+                    appointment_id: appointmentId,
+                    type: type,
+                    status: status,
+                    sent_at: new Date()
+                }])
+                .select()
+                .single();
+
+            if (error) {
+                console.error("❌ Erro logFollowUpMessage:", error.message);
+                return null;
+            }
+
+            return data;
+        } catch (error: any) {
+            console.error("❌ Erro crítico logFollowUpMessage:", error.message);
+            return null;
+        }
+    },
+
+    // Check if a specific type of message was already sent for an appointment
+    async checkFollowUpSent(appointmentId: string, type: string) {
+        try {
+            const { data, error } = await supabase
+                .from('follow_up_messages')
+                .select('id')
+                .eq('appointment_id', appointmentId)
+                .eq('type', type)
+                .limit(1);
+
+            if (error) {
+                return false;
+            }
+
+            return data && data.length > 0;
+        } catch (error: any) {
+            return false;
+        }
     }
 };

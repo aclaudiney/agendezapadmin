@@ -26,6 +26,7 @@ const Clients: React.FC = () => {
     try {
       setLoading(true);
       setErro('');
+      const CACHE_TTL_MS = 120000;
 
       const companyId = localStorage.getItem('companyId');
       
@@ -37,11 +38,20 @@ const Clients: React.FC = () => {
 
       console.log('🔍 Buscando clientes ativos para company_id:', companyId);
 
+      try {
+        const cache = localStorage.getItem(`cache_clientes_${companyId}`);
+        const parsed = cache ? JSON.parse(cache) : null;
+        const now = Date.now();
+        if (parsed && now - (parsed.ts || 0) < CACHE_TTL_MS) {
+          setClientes(parsed.data || []);
+        }
+      } catch {}
+
       const { data, error } = await supabase
         .from('clientes')
-        .select('*', { count: 'exact' })
+        .select('id, nome, telefone, data_nascimento, ativo', { count: 'exact' })
         .eq('company_id', companyId)
-        .eq('ativo', true) // ✅ APENAS ATIVOS
+        .eq('ativo', true)
         .order('nome', { ascending: true });
 
       if (error) {
@@ -53,6 +63,9 @@ const Clients: React.FC = () => {
 
       console.log('✅ Clientes carregados:', data?.length || 0);
       setClientes(data || []);
+      try {
+        localStorage.setItem(`cache_clientes_${companyId}`, JSON.stringify({ ts: Date.now(), data: data || [] }));
+      } catch {}
       setErro('');
     } catch (error) {
       console.error('❌ Erro crítico:', error);

@@ -5,7 +5,9 @@ import { connectToWhatsApp, initAllSessions, desconectarWhatsApp } from './whats
 import { db, supabase } from './supabase.js';
 import { v4 as uuidv4 } from 'uuid';
 import crmRoutes from './routes/crmRoutes.js';
-import adminRoutes from './routes/adminRoutes.js'; // ✅ ADICIONADO!
+import adminRoutes from './routes/adminRoutes.js';
+import followUpRoutes from './routes/followUpRoutes.js'; // ✅ NOVO
+import { FollowUpService } from './services/followUpService.js'; // ✅ NOVO // ✅ ADICIONADO!
 
 const app = express();
 app.use(cors());
@@ -15,7 +17,8 @@ const PORT = process.env.PORT || 3001;
 
 // ✅ ROTAS CRM - ADICIONAR LOGO APÓS express.json()
 app.use('/api/crm', crmRoutes);
-app.use('/api/admin', adminRoutes); // ✅ NOVO!
+app.use('/api/admin', adminRoutes);
+app.use('/api/follow-up', followUpRoutes); // ✅ NOVO // ✅ NOVO!
 
 // ✅ INTERFACE PARA TIPAR REQ.PARAMS CORRETAMENTE
 interface RequestWithCompanyId extends Request {
@@ -782,5 +785,11 @@ app.listen(PORT, async () => {
     console.log(`   - Criar Empresa: POST /admin/companies`);
     console.log(`   - CRM Conversas: GET /api/crm/conversations/:companyId`); // ✅ NOVO!
     console.log(`   - CRM Mensagens: GET /api/crm/messages/:companyId/:phone`); // ✅ NOVO!
-    console.log(`   - CRM Stats: GET /api/crm/stats/:companyId\n`); // ✅ NOVO!
+    console.log(`   - CRM Stats: GET /api/crm/stats/:companyId\n`);
+
+    // ✅ INICIAR JOB DE FOLLOW-UP (A CADA 1 MINUTO)
+    console.log("⏰ Iniciando serviço de Follow-up (Cron interno)...");
+    setInterval(() => {
+        FollowUpService.processAllCompanies().catch(err => console.error("❌ Erro no Cron Follow-up:", err));
+    }, 60 * 1000); // ✅ NOVO!
 });

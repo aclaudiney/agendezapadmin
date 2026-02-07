@@ -382,14 +382,8 @@ export const adminService = {
   // ✅ CRM: BUSCAR CONVERSAS (DIRETO SUPABASE)
   async buscarConversasCRM(companyId: string) {
     try {
-      const { data, error } = await supabase
-        .from('whatsapp_conversations')
-        .select('*')
-        .eq('company_id', companyId)
-        .order('last_message_at', { ascending: false });
-
-      if (error) throw error;
-      return data;
+      const response = await axios.get(`${API_URL}/api/crm/conversations/${companyId}`);
+      return response.data?.data || [];
     } catch (error) {
       console.error('❌ Erro CRM Conversas:', error);
       throw error;
@@ -399,20 +393,9 @@ export const adminService = {
   // ✅ CRM: BUSCAR MENSAGENS (DIRETO SUPABASE)
   async buscarMensagensCRM(companyId: string, clientPhone: string) {
     try {
-      console.log(`📊 [CRM] Buscando mensagens para ${clientPhone} na empresa ${companyId}`);
-      const { data, error } = await supabase
-        .from('whatsapp_messages')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('client_phone', clientPhone)
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        console.error('❌ Erro Supabase CRM Mensagens:', error);
-        throw error;
-      }
-
-      console.log(`✅ [CRM] ${data?.length || 0} mensagens encontradas.`);
+      const response = await axios.get(`${API_URL}/api/crm/messages/${companyId}/${clientPhone}`);
+      const data = response.data?.data || [];
+      console.log(`✅ [CRM] ${data.length} mensagens encontradas.`);
       return data;
     } catch (error) {
       console.error('❌ Erro CRM Mensagens:', error);

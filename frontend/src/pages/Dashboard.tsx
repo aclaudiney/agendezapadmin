@@ -33,6 +33,28 @@ const Dashboard: React.FC = () => {
         return;
       }
 
+      try {
+        const CACHE_TTL_MS = 120000;
+        const cacheKey = `cache_dashboard_${companyId}_${period}_${selectedProfessional || 'all'}`;
+        const cache = localStorage.getItem(cacheKey);
+        if (cache) {
+          const parsed = JSON.parse(cache);
+          const now = Date.now();
+          if (parsed && parsed.data && now - (parsed.ts || 0) < CACHE_TTL_MS) {
+            setData(parsed.data);
+            setLoading(false);
+          }
+        }
+        const profCache = localStorage.getItem(`cache_profissionais_${companyId}`);
+        if (profCache && professionalsList.length === 0) {
+          const parsedProfs = JSON.parse(profCache);
+          const now2 = Date.now();
+          if (parsedProfs && parsedProfs.data && now2 - (parsedProfs.ts || 0) < CACHE_TTL_MS) {
+            setProfessionalsList(parsedProfs.data);
+          }
+        }
+      } catch {}
+
       // Checa status da empresa
       const { data: empresa, error: erroEmpresa } = await supabase
         .from('companies')
@@ -52,6 +74,9 @@ const Dashboard: React.FC = () => {
           .select('id, nome')
           .eq('company_id', companyId);
         if (profs) setProfessionalsList(profs);
+        try {
+          localStorage.setItem(`cache_profissionais_${companyId}`, JSON.stringify({ ts: Date.now(), data: profs || [] }));
+        } catch {}
       }
 
       // Busca dados do Dashboard com filtro de profissional
@@ -61,6 +86,10 @@ const Dashboard: React.FC = () => {
         selectedProfessional || undefined
       );
       setData(dashData);
+      try {
+        const cacheKey = `cache_dashboard_${companyId}_${period}_${selectedProfessional || 'all'}`;
+        localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: dashData }));
+      } catch {}
     } catch (error: any) {
       console.error('Erro dashboard:', error);
       setEmpresaBloqueada(true);

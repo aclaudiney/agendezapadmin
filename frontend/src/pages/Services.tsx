@@ -25,6 +25,7 @@ const Services: React.FC = () => {
     try {
       setLoading(true);
       setErro('');
+      const CACHE_TTL_MS = 120000;
 
       const companyId = localStorage.getItem('companyId');
       
@@ -36,11 +37,20 @@ const Services: React.FC = () => {
 
       console.log('🔍 Buscando serviços ativos para company_id:', companyId);
 
+      try {
+        const cache = localStorage.getItem(`cache_servicos_${companyId}`);
+        const parsed = cache ? JSON.parse(cache) : null;
+        const now = Date.now();
+        if (parsed && now - (parsed.ts || 0) < CACHE_TTL_MS) {
+          setServicos(parsed.data || []);
+        }
+      } catch {}
+
       const { data, error } = await supabase
         .from('servicos')
-        .select('*', { count: 'exact' })
+        .select('id, nome, preco, duracao, ativo', { count: 'exact' })
         .eq('company_id', companyId)
-        .eq('ativo', true) // ✅ APENAS ATIVOS
+        .eq('ativo', true)
         .order('nome', { ascending: true });
 
       if (error) {
@@ -52,6 +62,9 @@ const Services: React.FC = () => {
 
       console.log('✅ Serviços carregados:', data?.length || 0);
       setServicos(data || []);
+      try {
+        localStorage.setItem(`cache_servicos_${companyId}`, JSON.stringify({ ts: Date.now(), data: data || [] }));
+      } catch {}
       setErro('');
     } catch (error) {
       console.error('❌ Erro crítico:', error);

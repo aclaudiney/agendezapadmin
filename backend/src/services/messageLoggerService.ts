@@ -44,7 +44,6 @@ export const salvarMensagemWhatsApp = async (dados: {
       return null;
     }
 
-    /* 
     // 2. ATUALIZAR A TABELA DE CONVERSAS (Para aparecer no CRM)
     // O upsert verifica se já existe uma conversa com esse telefone para essa empresa
     const { error: convError } = await supabase
@@ -63,7 +62,6 @@ export const salvarMensagemWhatsApp = async (dados: {
     if (convError) {
       console.error('❌ Erro ao atualizar whatsapp_conversations:', convError.message);
     }
-    */
 
     console.log(`✅ Mensagem e Conversa atualizadas: ${dados.direction}`);
     return messageData;

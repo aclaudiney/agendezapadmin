@@ -49,22 +49,6 @@ export const dashboardService = {
         const prevStartDate = new Date();
         prevStartDate.setDate(startDate.getDate() - days);
 
-        // 1. Receitas (Faturamento) - INCLUINDO AGENDAMENTOS CONFIRMADOS
-        const { data: currentPeriodRevenue } = await supabase
-            .from('financeiro')
-            .select('*')
-            .eq('company_id', companyId)
-            .eq('tipo', 'receita')
-            .gte('data_transacao', startDate.toISOString());
-
-        const { data: prevPeriodRevenue } = await supabase
-            .from('financeiro')
-            .select('valor')
-            .eq('company_id', companyId)
-            .eq('tipo', 'receita')
-            .gte('data_transacao', prevStartDate.toISOString())
-            .lt('data_transacao', startDate.toISOString());
-
         // 2. Agendamentos - COM FILTRO DE PROFISSIONAL
         let currentAptsQuery = supabase
             .from('agendamentos')
@@ -85,17 +69,38 @@ export const dashboardService = {
             prevAptsQuery = prevAptsQuery.eq('profissional_id', professionalId);
         }
 
-        const { data: currentPeriodApts } = await currentAptsQuery;
-        const { data: prevPeriodApts } = await prevAptsQuery;
+        const [
+            { data: currentPeriodRevenue },
+            { data: prevPeriodRevenue },
+            { data: professionals },
+            { data: services },
+            { data: clients },
+            { data: currentPeriodApts },
+            { data: prevPeriodApts }
+        ] = await Promise.all([
+            supabase
+                .from('financeiro')
+                .select('valor, agendamento_id, data_transacao')
+                .eq('company_id', companyId)
+                .eq('tipo', 'receita')
+                .gte('data_transacao', startDate.toISOString()),
+            supabase
+                .from('financeiro')
+                .select('valor, agendamento_id, data_transacao')
+                .eq('company_id', companyId)
+                .eq('tipo', 'receita')
+                .gte('data_transacao', prevStartDate.toISOString())
+                .lt('data_transacao', startDate.toISOString()),
+            supabase.from('profissionais').select('id, nome, ativo').eq('company_id', companyId),
+            supabase.from('servicos').select('id, nome, preco, ativo, duracao_minutos').eq('company_id', companyId),
+            supabase.from('clientes').select('id, nome').eq('company_id', companyId),
+            currentAptsQuery,
+            prevAptsQuery
+        ]);
 
         const currentApts = currentPeriodApts?.length || 0;
         const prevApts = prevPeriodApts?.length || 0;
         const aptsTrend = prevApts > 0 ? ((currentApts - prevApts) / prevApts) * 100 : 0;
-
-        // 3. Profissionais, Serviços e Clientes
-        const { data: professionals } = await supabase.from('profissionais').select('*').eq('company_id', companyId);
-        const { data: services } = await supabase.from('servicos').select('*').eq('company_id', companyId);
-        const { data: clients } = await supabase.from('clientes').select('*').eq('company_id', companyId);
 
         // CORREÇÃO: Calcular receita SEM DUPLICAÇÃO
         // IDs de agendamentos que já têm lançamento manual no financeiro
