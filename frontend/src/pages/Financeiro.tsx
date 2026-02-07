@@ -77,45 +77,51 @@ export default function Financeiro() {
         return;
       }
 
-      console.log('🔍 Buscando receitas para company_id:', companyId);
-      console.log('📅 Período:', dataInicio, 'até', dataFim);
+      const inicio = dataInicio || new Date().toISOString().split('T')[0];
+      const fim = dataFim || new Date().toISOString().split('T')[0];
 
-      let query = supabase
-        .from('financeiro')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('tipo', 'receita');
+      const [{ data: apts, error: aptErr }, { data: servs, error: servErr }] = await Promise.all([
+        supabase
+          .from('agendamentos')
+          .select('id, status, servico_id, data_pagamento, forma_pagamento')
+          .eq('company_id', companyId)
+          .gte('data_agendamento', inicio)
+          .lte('data_agendamento', fim),
+        supabase
+          .from('servicos')
+          .select('id, nome, preco')
+          .eq('company_id', companyId)
+      ]);
 
-      // ✅ CORRIGIR FILTRO DE DATAS COM TIMESTAMP
-      if (dataInicio) {
-        query = query.gte('data_transacao', dataInicio + 'T00:00:00');
-      }
-
-      if (dataFim) {
-        query = query.lte('data_transacao', dataFim + 'T23:59:59');
-      }
-
-      const { data, error } = await query.order('data_transacao', { ascending: false });
-
-      if (error) {
-        console.error('❌ Erro ao carregar receitas:', error);
+      if (aptErr || servErr) {
+        console.error('❌ Erro ao buscar dados:', aptErr || servErr);
         setErro('Erro ao carregar receitas');
         setLoading(false);
         return;
       }
 
-      let dataNormalizado = data?.map(d => ({
-        ...d,
-        forma_pagamento: normalizarFormaPagamento(d.forma_pagamento)
-      })) || [];
+      const servMap = new Map((servs || []).map(s => [s.id, s]));
+      const finalizados = (apts || []).filter(a => (a.status || '').toLowerCase() === 'finalizado');
 
-      // ✅ FILTRAR POR FORMA DE PAGAMENTO (SÓ SE NÃO FOR 'TODOS')
+      // ✅ Construir uma lista única por agendamento finalizado, usando o valor do serviço
+      let receitasDerivadas: Receita[] = finalizados.map(a => {
+        const srv = servMap.get(a.servico_id);
+        return {
+          id: a.id,
+          descricao: `Pagamento - ${srv?.nome || 'Serviço'}`,
+          valor: srv?.preco || 0,
+          data_transacao: a.data_pagamento || new Date().toISOString(),
+          forma_pagamento: normalizarFormaPagamento(a.forma_pagamento),
+          agendamento_id: a.id
+        } as Receita;
+      });
+
+      // ✅ Filtrar por forma de pagamento
       if (filtroFormaPagamento !== 'todos') {
-        dataNormalizado = dataNormalizado.filter(r => r.forma_pagamento === filtroFormaPagamento);
+        receitasDerivadas = receitasDerivadas.filter(r => r.forma_pagamento === filtroFormaPagamento);
       }
 
-      console.log('✅ Receitas carregadas:', dataNormalizado.length);
-      setReceitas(dataNormalizado);
+      setReceitas(receitasDerivadas);
     } catch (error) {
       console.error('❌ Erro crítico ao carregar receitas:', error);
       setErro('Erro ao carregar receitas');

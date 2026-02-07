@@ -1,6 +1,122 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Search, Filter, Download, MoreVertical, Plus, X, AlertCircle, Edit2, Check, CreditCard, Trash2 } from 'lucide-react';
+
+const ComboSelect = ({ 
+  options, 
+  value, 
+  onChange, 
+  getOptionValue, 
+  getOptionLabel, 
+  placeholder 
+}: { 
+  options: any[]; 
+  value: string; 
+  onChange: (val: string) => void; 
+  getOptionValue: (o: any) => string; 
+  getOptionLabel: (o: any) => string; 
+  placeholder: string; 
+}) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (open && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filtered = options.filter(o => {
+    const label = getOptionLabel(o).toLowerCase();
+    const digits = String(getOptionLabel(o).replace(/\D/g, ''));
+    const q = query.toLowerCase();
+    const qDigits = query.replace(/\D/g, '');
+    return q ? (label.includes(q) || (qDigits ? digits.includes(qDigits) : false)) : true;
+  });
+
+  const selectedLabel = (() => {
+    const sel = options.find(o => getOptionValue(o) === value);
+    return sel ? getOptionLabel(sel) : '';
+  })();
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((prev) => Math.min(prev + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const item = filtered[highlight];
+      if (item) {
+        onChange(getOptionValue(item));
+        setOpen(false);
+        setQuery('');
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+      setQuery('');
+    }
+  };
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-4 py-2 border border-slate-200 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+      >
+        <span className="text-sm text-slate-700">{selectedLabel || placeholder}</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg">
+          <div className="relative p-2 border-b border-slate-100">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setHighlight(0); }}
+              onKeyDown={handleKeyDown}
+              placeholder="Buscar por nome ou telefone..."
+              className="w-full pl-9 pr-3 py-2 rounded-md border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+            />
+          </div>
+          <ul className="max-h-60 overflow-auto">
+            {filtered.map((o, idx) => (
+              <li
+                key={getOptionValue(o)}
+                onMouseEnter={() => setHighlight(idx)}
+                onClick={() => { onChange(getOptionValue(o)); setOpen(false); setQuery(''); }}
+                className={`px-3 py-2 cursor-pointer text-sm ${idx === highlight ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                {getOptionLabel(o)}
+              </li>
+            ))}
+            {filtered.length === 0 && (
+              <li className="px-3 py-2 text-sm text-slate-400">Nenhum resultado</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Appointments: React.FC = () => {
   const [filter, setFilter] = useState('all');
@@ -95,7 +211,7 @@ const Appointments: React.FC = () => {
           .select('id, nome, telefone')
           .eq('company_id', companyId),
         supabase.from('profissionais')
-          .select('id, nome, ativo, especialidade')
+          .select('id, nome, ativo, telefone, especialidade')
           .eq('company_id', companyId),
         supabase.from('servicos')
           .select('id, nome, preco, duracao, ativo')
@@ -194,8 +310,8 @@ const Appointments: React.FC = () => {
         return;
       }
 
-      // SE FOR CONFIRMADO, PEDIR FORMA DE PAGAMENTO
-      if (novoStatusValue === 'confirmado') {
+      // SE FOR FINALIZADO, PEDIR FORMA DE PAGAMENTO
+      if (novoStatusValue === 'finalizado') {
         const agendamento = agendamentos.find(a => a.id === aptId);
         setAgendamentoSelecionado(agendamento);
         setFormaPagamento('');
@@ -378,7 +494,7 @@ const Appointments: React.FC = () => {
       const { error: errorAgendamento } = await supabase
         .from('agendamentos')
         .update({
-          status: 'confirmado',
+          status: 'finalizado',
           forma_pagamento: formaPagamento,
           valor_pago: valor,
           data_pagamento: new Date().toISOString()
@@ -417,7 +533,7 @@ const Appointments: React.FC = () => {
       setAgendamentos(agendamentos.map(apt =>
         apt.id === agendamentoSelecionado.id ? {
           ...apt,
-          status: 'confirmado',
+          status: 'finalizado',
           forma_pagamento: formaPagamento,
           valor_pago: valor,
           data_pagamento: new Date().toISOString()
@@ -443,6 +559,19 @@ const Appointments: React.FC = () => {
       return cliente?.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
              cliente?.telefone.includes(searchTerm);
     });
+
+  const onlyDigits = (v: string | undefined | null) => String(v || '').replace(/\D/g, '');
+  const formatPhone = (v: string | undefined | null) => {
+    let d = onlyDigits(v);
+    if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+    if (d.length === 11) {
+      return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+    }
+    if (d.length === 10) {
+      return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+    }
+    return v || '';
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -613,7 +742,7 @@ const Appointments: React.FC = () => {
                     </td>
                     <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
                       <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded capitalize">
-                        {apt.forma_pagamento || '-'}
+                        {apt.status === 'finalizado' ? (apt.forma_pagamento || '-') : '-'}
                       </span>
                     </td>
                     <td className="px-4 md:px-6 py-4">
@@ -728,32 +857,26 @@ const Appointments: React.FC = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Cliente *</label>
-                <select 
-                  value={formData.cliente_id}
-                  onChange={(e) => setFormData({...formData, cliente_id: e.target.value})}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                >
-                  <option value="">Selecione um cliente</option>
-                  {clientes.map(c => (
-                    <option key={c.id} value={c.id}>{c.nome}</option>
-                  ))}
-                </select>
+              <ComboSelect
+                options={clientes}
+                value={formData.cliente_id}
+                onChange={(val) => setFormData({ ...formData, cliente_id: val })}
+                getOptionValue={(c: any) => c.id}
+                getOptionLabel={(c: any) => `${c.nome} — ${formatPhone(c.telefone)}`}
+                placeholder="Selecione um cliente"
+              />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Profissional *</label>
-                <select 
-                  value={formData.profissional_id}
-                  onChange={(e) => setFormData({...formData, profissional_id: e.target.value})}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                >
-                  <option value="">Selecione um profissional</option>
-                  {profissionais.map(p => (
-                    <option key={p.id} value={p.id}>{p.nome}</option>
-                  ))}
-                </select>
+              <ComboSelect
+                options={profissionais}
+                value={formData.profissional_id}
+                onChange={(val) => setFormData({ ...formData, profissional_id: val })}
+                getOptionValue={(p: any) => p.id}
+                getOptionLabel={(p: any) => `${p.nome}${p.telefone ? ` — ${formatPhone(p.telefone)}` : ''}`}
+                placeholder="Selecione um profissional"
+              />
               </div>
 
               <div>
