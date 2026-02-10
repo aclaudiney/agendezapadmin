@@ -1,0 +1,46 @@
+[
+  {
+    "id": "1770652716742",
+    "name": "Pós-Corte",
+    "is_active": false,
+    "warning_time": "08:00:00",
+    "reminder_minutes": 60,
+    "message_template_warning": "Olá {cliente_nome}, como ficou o corte? Se precisar é só chamar!",
+    "message_template_reminder": "",
+    "trigger_type": "dias_apos",
+    "trigger_days": 10
+  },
+  {
+    "id": "1770652712343",
+    "name": "Recorrência",
+    "is_active": false,
+    "warning_time": "08:00:00",
+    "reminder_minutes": 60,
+    "message_template_warning": "Olá {cliente_nome}, bora agendar de novo? Já faz um tempo desde seu último atendimento com {profissional}.",
+    "message_template_reminder": "",
+    "trigger_type": "dias_apos",
+    "trigger_days": 15
+  },
+  {
+    "id": "1770652706030",
+    "name": "Lembrete",
+    "is_active": false,
+    "warning_time": "08:00:00",
+    "reminder_minutes": 15,
+    "message_template_warning": "",
+    "message_template_reminder": "Olá {cliente_nome}, seu agendamento é em {minutos} minutos! Estamos te esperando.",
+    "trigger_type": "antecedencia",
+    "trigger_days": null
+  },
+  {
+    "id": "1770652703022",
+    "name": "Aviso",
+    "is_active": false,
+    "warning_time": "08:00:00",
+    "reminder_minutes": 60,
+    "message_template_warning": "Olá {cliente_nome}, passando pra lembrar do seu agendamento hoje com {profissional}.",
+    "message_template_reminder": "",
+    "trigger_type": "time_fixed",
+    "trigger_days": null
+  }
+]

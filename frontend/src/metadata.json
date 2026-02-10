@@ -1,0 +1,8 @@
+{
+  "name": "AgendeZap - Integrated Scheduling System",
+  "description": "A comprehensive SaaS scheduling system with WhatsApp AI chatbot integration, web booking link, and a complete management dashboard for beauty salons, barbershops, and clinics.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

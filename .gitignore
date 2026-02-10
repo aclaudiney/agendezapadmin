@@ -1,0 +1,26 @@
+# Environment variables
+.env
+backend/.env
+frontend/.env
+
+# Dependencies
+**/node_modules/
+
+# Build output
+backend/dist/
+frontend/dist/
+
+# Sessions (WhatsApp)
+backend/sessions/
+
+# Logs
+backend/logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

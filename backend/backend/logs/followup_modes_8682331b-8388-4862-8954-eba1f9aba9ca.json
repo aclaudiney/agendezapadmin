@@ -1,0 +1,13 @@
+[
+  {
+    "id": "1770732791949",
+    "name": "Lembrete",
+    "is_active": false,
+    "warning_time": "08:00:00",
+    "reminder_minutes": 60,
+    "message_template_warning": "",
+    "message_template_reminder": "Olá {cliente_nome}, seu agendamento é em {minutos} minutos! Estamos te esperando.",
+    "trigger_type": "antecedencia",
+    "trigger_days": null
+  }
+]
