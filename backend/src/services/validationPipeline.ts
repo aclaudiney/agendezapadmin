@@ -343,8 +343,18 @@ export const validarEEnriquecerContexto = async (
       return resultado;
     }
 
-    // CASO 4: Só DATA
+    // CASO 4: Só DATA (ou apenas consulta de funcionamento)
     if (dadosExtraidos.data && !dadosExtraidos.hora && !dadosExtraidos.periodo) {
+      // ✅ REGRA: Se não tem hora nem serviço, a validação de dia aberto é apenas informativa
+      const diaValido = await validarDiaAberto(contexto.companyId, dadosExtraidos.data);
+      
+      resultado.validacoes.diaAberto = diaValido.aberto;
+      
+      // Só injeta motivoErro se o dia estiver REALMENTE fechado
+      if (!diaValido.aberto) {
+        resultado.validacoes.motivoErro = diaValido.motivo;
+      }
+
       const periodosDisponiveis = await determinarPeriodosDisponiveis(contexto.companyId, dadosExtraidos.data, contexto.dataAtual, contexto.horarioAtual);
       resultado.validacoes.periodosDisponiveis = periodosDisponiveis.periodos;
       return resultado;

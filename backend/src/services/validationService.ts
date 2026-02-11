@@ -25,7 +25,7 @@ export const validarDiaAberto = async (
 
     if (!config) {
       console.log(`   ⚠️ Configuração não encontrada para empresa ${companyId}. Permitindo por padrão.`);
-      return { aberto: true, motivo: 'Configuração não encontrada (permitido por padrão)' };
+      return { aberto: true };
     }
 
     // ✅ CORRIGIDO: Converter data YYYY-MM-DD para dia da semana COM TIMEZONE BRASIL
@@ -48,13 +48,14 @@ export const validarDiaAberto = async (
     }
 
     // ✅ PRIORIDADE 2: Buscar horário específico do dia (horario_segunda, horario_terca, etc)
-    const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
+    const horarioDoDiaRaw = config[`horario_${nomesDiaIngles[diaSemana]}`];
+    const horarioDoDia = typeof horarioDoDiaRaw === 'string' ? horarioDoDiaRaw : String(horarioDoDiaRaw || '');
 
     console.log(`   🕐 Validando dia: ${nomesDia[diaSemana]} (${data})`);
     console.log(`      Horário do dia: ${horarioDoDia}`);
 
     // ✅ CRÍTICO: Se tá "FECHADO", retorna erro
-    if (horarioDoDia === 'FECHADO' || !horarioDoDia || String(horarioDoDia).trim() === '') {
+    if (horarioDoDia === 'FECHADO' || !horarioDoDia || horarioDoDia.trim() === '') {
       return {
         aberto: false,
         motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
@@ -62,11 +63,14 @@ export const validarDiaAberto = async (
     }
 
     // ✅ VALIDAR SE HORÁRIO TÁ DENTRO DA ABERTURA (se informado)
-    if (hora) {
+    if (hora && horarioDoDia.includes('-')) {
       console.log(`   ⏰ Validando horário: ${hora}`);
 
-      const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
-      const [horaFechamento, minFechamento] = horarioDoDia.split('-')[1].split(':').map(Number);
+      const [aberturaPart, fechamentoPart] = horarioDoDia.split('-');
+      if (!aberturaPart || !fechamentoPart) return { aberto: true }; // Prevenção contra string mal formatada
+
+      const [horaAbertura, minAbertura] = aberturaPart.split(':').map(Number);
+      const [horaFechamento, minFechamento] = fechamentoPart.split(':').map(Number);
       const [horaAgendamento, minAgendamento] = hora.split(':').map(Number);
 
       const minutoAbertura = horaAbertura * 60 + minAbertura;
