@@ -392,7 +392,26 @@ export const db = {
 
     async getConfiguracao(companyId: string) {
         try {
-            // Tenta buscar em 'company_settings' primeiro (tabela nova/unificada)
+            console.log(`🔍 [DB] Buscando configuração para companyId: ${companyId}`);
+
+            // 1. Tenta buscar em 'configuracoes' primeiro (é onde os dados reais estão no dump do usuário)
+            const { data, error } = await supabase
+                .from('configuracoes')
+                .select('*')
+                .eq('company_id', companyId)
+                .maybeSingle();
+
+            if (data) {
+                console.log(`✅ [DB] Configuração encontrada na tabela 'configuracoes'`);
+                return data;
+            }
+
+            if (error) {
+                console.error("❌ [DB] Erro ao buscar em 'configuracoes':", error.message);
+            }
+
+            // 2. Fallback para 'company_settings' (tabela nova/alternativa)
+            console.log(`⚠️ [DB] Não encontrado em 'configuracoes', tentando 'company_settings'...`);
             const { data: settings, error: settingsError } = await supabase
                 .from('company_settings')
                 .select('*')
@@ -400,23 +419,18 @@ export const db = {
                 .maybeSingle();
 
             if (settings) {
+                console.log(`✅ [DB] Configuração encontrada na tabela 'company_settings'`);
                 return settings;
             }
 
-            // Fallback para 'configuracoes' (tabela legada)
-            const { data, error } = await supabase
-                .from('configuracoes')
-                .select('*')
-                .eq('company_id', companyId)
-                .maybeSingle();
-
-            if (error && error.code !== 'PGRST116') {
-                console.error("❌ Erro getConfiguracao:", error.message);
+            if (settingsError) {
+                console.error("❌ [DB] Erro ao buscar em 'company_settings':", settingsError.message);
             }
 
-            return data;
+            console.error(`❌ [DB] Nenhuma configuração encontrada para empresa ${companyId} em nenhuma das tabelas.`);
+            return null;
         } catch (error: any) {
-            console.error("❌ Erro crítico getConfiguracao:", error.message);
+            console.error("❌ [DB] Erro crítico getConfiguracao:", error.message);
             return null;
         }
     },

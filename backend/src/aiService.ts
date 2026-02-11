@@ -143,7 +143,10 @@ export const gerarRespostaIA = async (dados: any) => {
             const { db } = await import('./supabase.js');
             const config = await db.getConfiguracao(dados.companyId);
             if (config) {
+                console.log(`   ✅ [IA] Configurações carregadas para o prompt (Empresa: ${config.nome_estabelecimento || dados.nomeLoja})`);
                 dadosExtraidos.configuracoes = config;
+            } else {
+                console.warn(`   ⚠️ [IA] Falha ao carregar configurações para empresa ${dados.companyId}`);
             }
         }
 
