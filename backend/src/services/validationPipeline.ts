@@ -178,7 +178,7 @@ export const validarEEnriquecerContexto = async (
   contexto: ConversationContext
 ): Promise<ResultadoValidacao> => {
   try {
-    console.log(`\n🔍 [VALIDATION] Validando dados extraídos... (Tipo: ${contexto.tipoConversa})`);
+    console.log(`\n🔍 [VALIDATION] Validando dados extraídos... (Tipo: ${contexto.tipo})`);
 
     const resultado: ResultadoValidacao = {
       ...dadosExtraidos,
@@ -194,7 +194,7 @@ export const validarEEnriquecerContexto = async (
     };
 
     // ✅ VALIDAÇÃO 0: Se for CONSULTA, pula validações rigorosas e retorna tudo como true
-    if (contexto.tipoConversa === 'consultar') {
+    if (contexto.tipo === 'consultar') {
       console.log(`   ℹ️ [VALIDATION] Tipo 'consultar' detectado. Pulando validações de agendamento.`);
       return resultado;
     }
