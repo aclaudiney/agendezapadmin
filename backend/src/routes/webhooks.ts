@@ -135,7 +135,16 @@ async function handleIncomingMessage(companyId: string, data: any) {
             if (!messageText && msg.message?.audioMessage) {
                 console.log(`🎙️ [${companyId}] Áudio recebido de ${phone}. Transcrevendo...`);
                 try {
-                    const audioBuffer = await evolutionAPI.downloadMedia(msg.key, companyId);
+                    // ✅ CRÍTICO: Na Evolution v2, a chave da mensagem pode estar em msg.key ou msg
+                    const messageKey = msg.key || {
+                        id: msg.id,
+                        remoteJid: clientJid,
+                        fromMe: fromMe
+                    };
+
+                    console.log(`🔍 [${companyId}] Debug Key:`, JSON.stringify(messageKey));
+
+                    const audioBuffer = await evolutionAPI.downloadMedia(messageKey, companyId);
                     if (audioBuffer) {
                         const transcricao = await transcreverAudio(audioBuffer);
                         if (transcricao) {
@@ -145,7 +154,7 @@ async function handleIncomingMessage(companyId: string, data: any) {
                             console.log(`⚠️ [${companyId}] Transcrição retornou vazia para ${phone}`);
                         }
                     } else {
-                        console.log(`❌ [${companyId}] Não foi possível obter o buffer do áudio para ${phone}`);
+                        console.log(`❌ [${companyId}] Não foi possível obter o buffer do áudio para ${phone}. Verifique se a instância tem 'Always Online' ou 'Read Messages' desativados.`);
                     }
                 } catch (audioErr) {
                     console.error(`❌ [${companyId}] Erro ao processar áudio:`, audioErr);

@@ -417,18 +417,19 @@ export class EvolutionAPI {
      * ✅ Super resiliente: Tenta POST v2, GET legacy e Base64 fallback
      */
     async downloadMedia(messageKey: any, companyId: string): Promise<Buffer | null> {
-        const messageId = typeof messageKey === 'string' ? messageKey : messageKey.id;
+        const messageId = typeof messageKey === 'string' ? messageKey : (messageKey.id || messageKey.key?.id);
         
         try {
             console.log(`📥 [Evolution] Tentando baixar mídia ${messageId} (Empresa: ${companyId})...`);
+
+            // Garantir que a key esteja no formato esperado pela API { id, remoteJid, fromMe }
+            const payloadKey = typeof messageKey === 'string' ? { id: messageKey } : messageKey;
 
             // 1. TENTATIVA: POST /message/downloadMedia (Padrão v2)
             try {
                 const response = await axios.post<ArrayBuffer>(
                     `${this.baseURL}/message/downloadMedia/${companyId}`,
-                    {
-                        key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
-                    },
+                    { key: payloadKey },
                     { 
                         headers: this.getHeaders(),
                         responseType: 'arraybuffer' 
