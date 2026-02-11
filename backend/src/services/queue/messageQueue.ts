@@ -97,7 +97,12 @@ export async function processMessage(data: any, jobId: string | number = 'direct
         }
 
         // 4️⃣ ATALHO: CONSULTAR AGENDAMENTOS (sem IA)
-        if (contexto.tipo === 'consultar') {
+        // ✅ CORREÇÃO: Só entra aqui se for uma intenção clara de consulta de agendamento PRÓPRIO.
+        // Se a mensagem contiver "horário" ou "funciona", deixamos a IA responder com os horários da loja.
+        const msgLower = messageText.toLowerCase();
+        const perguntandoSobreLoja = msgLower.includes('horário') || msgLower.includes('horario') || msgLower.includes('funciona') || msgLower.includes('aberto');
+
+        if (contexto.tipo === 'consultar' && !perguntandoSobreLoja) {
             // ... (Lógica de consulta simplificada ou chamar handler)
             // Por agora, vamos deixar a IA tratar se for mais complexo, 
             // ou replicar a lógica do whatsapp.ts aqui

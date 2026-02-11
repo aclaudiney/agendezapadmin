@@ -140,11 +140,15 @@ async function handleIncomingMessage(companyId: string, data: any) {
                         const transcricao = await transcreverAudio(audioBuffer);
                         if (transcricao) {
                             messageText = transcricao;
-                            console.log(`✅ [${companyId}] Transcrição: "${messageText}"`);
+                            console.log(`✅ [${companyId}] Transcrição concluída para ${phone}: "${messageText}"`);
+                        } else {
+                            console.log(`⚠️ [${companyId}] Transcrição retornou vazia para ${phone}`);
                         }
+                    } else {
+                        console.log(`❌ [${companyId}] Não foi possível obter o buffer do áudio para ${phone}`);
                     }
                 } catch (audioErr) {
-                    console.error(`❌ Erro ao processar áudio:`, audioErr);
+                    console.error(`❌ [${companyId}] Erro ao processar áudio:`, audioErr);
                 }
             }
 

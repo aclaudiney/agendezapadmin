@@ -414,30 +414,87 @@ export class EvolutionAPI {
 
     /**
      * Download de mídia (áudio, imagem, etc)
-     * ✅ Atualizado para v2 (POST /message/downloadMedia)
+     * ✅ Super resiliente: Tenta POST v2, GET legacy e Base64 fallback
      */
     async downloadMedia(messageKey: any, companyId: string): Promise<Buffer | null> {
+        const messageId = typeof messageKey === 'string' ? messageKey : messageKey.id;
+        
         try {
-            const messageId = typeof messageKey === 'string' ? messageKey : messageKey.id;
-            console.log(`📥 [Evolution] Baixando mídia da mensagem ${messageId}...`);
+            console.log(`📥 [Evolution] Tentando baixar mídia ${messageId} (Empresa: ${companyId})...`);
 
-            // Em v2, o endpoint correto é POST /message/downloadMedia/{instance}
-            // O corpo deve conter a chave completa da mensagem
-            const response = await axios.post<ArrayBuffer>(
-                `${this.baseURL}/message/downloadMedia/${companyId}`,
-                {
-                    key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
-                },
-                { 
-                    headers: this.getHeaders(),
-                    responseType: 'arraybuffer' 
+            // 1. TENTATIVA: POST /message/downloadMedia (Padrão v2)
+            try {
+                const response = await axios.post<ArrayBuffer>(
+                    `${this.baseURL}/message/downloadMedia/${companyId}`,
+                    {
+                        key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
+                    },
+                    { 
+                        headers: this.getHeaders(),
+                        responseType: 'arraybuffer' 
+                    }
+                );
+                console.log(`✅ [Evolution] Mídia baixada via POST v2`);
+                return Buffer.from(response.data as ArrayBuffer);
+            } catch (v2Error: any) {
+                console.log(`⚠️ [Evolution] POST v2 falhou para ${messageId}. Tentando GET legacy...`);
+            }
+
+            // 2. TENTATIVA: GET /message/downloadMedia/{instance}/{id} (v1/Legacy)
+            try {
+                const legacyResponse = await axios.get<ArrayBuffer>(
+                    `${this.baseURL}/message/downloadMedia/${companyId}/${messageId}`,
+                    { 
+                        headers: this.getHeaders(),
+                        responseType: 'arraybuffer' 
+                    }
+                );
+                console.log(`✅ [Evolution] Mídia baixada via GET legacy`);
+                return Buffer.from(legacyResponse.data as ArrayBuffer);
+            } catch (legacyError: any) {
+                console.log(`⚠️ [Evolution] GET legacy falhou para ${messageId}. Tentando Base64 fallback...`);
+            }
+
+            // 3. TENTATIVA: POST /chat/getBase64FromMediaMessage (Fallback v2 alternativo)
+            try {
+                const base64Response = await axios.post(
+                    `${this.baseURL}/chat/getBase64FromMediaMessage/${companyId}`,
+                    {
+                        key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
+                    },
+                    { headers: this.getHeaders() }
+                );
+
+                const base64Data = (base64Response.data as any).base64 || (base64Response.data as any).response;
+                if (base64Data) {
+                    console.log(`✅ [Evolution] Mídia obtida via Base64 fallback`);
+                    // Remover prefixo data:audio/ogg;base64, se existir
+                    const base64String = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+                    return Buffer.from(base64String, 'base64');
                 }
-            );
+            } catch (base64Error: any) {
+                console.log(`⚠️ [Evolution] Base64 fallback falhou para ${messageId}`);
+            }
 
-            return Buffer.from(response.data as ArrayBuffer);
+            throw new Error('Todas as tentativas de download de mídia falharam.');
+
         } catch (error: any) {
-            // Se o erro for 404 no POST, talvez a versão seja diferente
-            console.error(`❌ [Evolution] Erro no downloadMedia:`, error.response?.data || error.message);
+            let errorDetail = error.message;
+            
+            if (error.response?.data) {
+                const data = error.response.data;
+                if (data instanceof ArrayBuffer || Buffer.isBuffer(data)) {
+                    try {
+                        errorDetail = Buffer.from(data).toString();
+                    } catch (e) {
+                        errorDetail = `Erro binário (Status: ${error.response.status})`;
+                    }
+                } else {
+                    errorDetail = JSON.stringify(data);
+                }
+            }
+
+            console.error(`❌ [Evolution] Falha total ao baixar mídia ${messageId}:`, errorDetail);
             return null;
         }
     }

@@ -177,7 +177,11 @@ export const gerarRespostaIA = async (dados: any) => {
                 }
             });
 
-            horariosFuncionamento += `\n⚠️ IMPORTANTE: Use ESTES horários acima para informar ao cliente. Se o dia constar como FECHADO, diga que não atendemos nesse dia.\n`;
+            horariosFuncionamento += `\n⚠️ IMPORTANTE (REGRAS DE OURO):\n`;
+            horariosFuncionamento += `1. SEMPRE use os horários da lista acima para responder sobre funcionamento.\n`;
+            horariosFuncionamento += `2. Se o dia constar como FECHADO, diga explicitamente que não abrimos nesse dia.\n`;
+            horariosFuncionamento += `3. Se o cliente perguntar "que horas vocês abrem amanhã", verifique qual dia da semana é amanhã na lista acima e responda o horário EXATO.\n`;
+            horariosFuncionamento += `4. JAMAIS invente horários genéricos como "08:00 às 18:00" se a lista acima disser algo diferente.\n`;
         } else {
             horariosFuncionamento += `Horários não configurados. Por favor, consulte o estabelecimento.\n`;
         }
