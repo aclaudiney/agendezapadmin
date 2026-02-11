@@ -21,7 +21,7 @@ export const validarDiaAberto = async (
   try {
     // Buscar configuração
     const { data: config, error } = await supabase
-      .from('configuracoes')
+      .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();
@@ -80,17 +80,10 @@ export const validarDiaAberto = async (
       console.log(`      Fechamento: ${horarioDoDia.split('-')[1]} (${minutoFechamento} min)`);
 
       // Se horário tá ANTES da abertura ou DEPOIS do fechamento
-      if (minutoAgendamento < minutoAbertura) {
+      if (minutoAgendamento < minutoAbertura || minutoAgendamento > minutoFechamento) {
         return {
           aberto: false,
-          motivo: `Desculpa, abrimos às ${horarioDoDia.split('-')[0]} nesse dia. Escolha um horário após esse.`
-        };
-      }
-
-      if (minutoAgendamento >= minutoFechamento) {
-        return {
-          aberto: false,
-          motivo: `Desculpa, fechamos às ${horarioDoDia.split('-')[1]} nesse dia. Escolha um horário antes disso.`
+          motivo: `Desculpa, nosso horário de funcionamento nesse dia é das ${horarioDoDia.split('-')[0]} às ${horarioDoDia.split('-')[1]}.`
         };
       }
 
@@ -151,7 +144,7 @@ export const validarHorarioDisponivel = async (
   try {
     // ✅ PRIMEIRO: Validar se tá dentro do horário de funcionamento
     const { data: config } = await supabase
-      .from('configuracoes')
+      .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();
@@ -292,7 +285,7 @@ export const determinarPeriodosDisponiveis = async (
     if (dataAgendamento !== dataAtual) {
       // Buscar hora de fechamento
       const { data: config } = await supabase
-        .from('configuracoes')
+        .from('company_settings')
         .select('hora_fechamento')
         .eq('company_id', companyId)
         .single();
@@ -321,7 +314,7 @@ export const determinarPeriodosDisponiveis = async (
 
     // Buscar hora de fechamento
     const { data: config } = await supabase
-      .from('configuracoes')
+      .from('company_settings')
       .select('hora_fechamento')
       .eq('company_id', companyId)
       .single();
@@ -374,7 +367,7 @@ export const buscarHorariosDisponiveis = async (
   try {
     // Buscar configuração
     const { data: config } = await supabase
-      .from('configuracoes')
+      .from('company_settings')
       .select('*')
       .eq('company_id', companyId)
       .single();

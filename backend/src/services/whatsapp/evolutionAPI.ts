@@ -412,6 +412,26 @@ export class EvolutionAPI {
         }
     }
 
+    /**
+     * Download de mídia (áudio, imagem, etc)
+     */
+    async downloadMedia(messageId: string, companyId: string) {
+        try {
+            console.log(`📥 [Evolution] Baixando mídia da mensagem ${messageId}...`);
+            const response = await axios.get(
+                `${this.baseURL}/message/downloadMedia/${companyId}/${messageId}`,
+                { 
+                    headers: this.getHeaders(),
+                    responseType: 'arraybuffer' 
+                }
+            );
+            return Buffer.from(response.data);
+        } catch (error: any) {
+            console.error(`❌ [Evolution] Erro no downloadMedia:`, error.response?.data || error.message);
+            return null;
+        }
+    }
+
     // ==================== PERFIL ====================
 
     /**

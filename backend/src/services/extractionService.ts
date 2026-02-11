@@ -9,6 +9,7 @@
 
 import { ConversationContext } from '../types/conversation.js';
 import { createClient } from '@supabase/supabase-js';
+import { format, startOfWeek, endOfWeek } from 'date-fns';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -332,11 +333,47 @@ const extrairHora = (mensagem: string): string | null => {
 // EXTRAIR PROFISSIONAL
 // ============================================
 
-const extrairProfissional = (
+const extrairProfissional = async (
   mensagem: string,
-  contexto: ConversationContext
-): string | null => {
+  contexto: ConversationContext,
+  dataAgendamento?: string | null
+): Promise<string | null> => {
   const msgLower = mensagem.toLowerCase();
+
+  // ✅ NOVO: Lógica de "Qualquer um" / "Tanto faz"
+  if (/qualquer|tanto faz|escolhe|quem estiver livre|tanto faz o profissional/i.test(msgLower)) {
+    try {
+      console.log(`   🎲 Usuário escolheu "Qualquer Profissional". Buscando o menos ocupado...`);
+      
+      const dataRef = dataAgendamento ? new Date(`${dataAgendamento}T12:00:00`) : new Date();
+      const inicio = format(startOfWeek(dataRef), 'yyyy-MM-dd');
+      const fim = format(endOfWeek(dataRef), 'yyyy-MM-dd');
+      
+      const { data: contagem } = await supabase
+        .from('agendamentos')
+        .select('profissional_id')
+        .eq('company_id', contexto.companyId)
+        .gte('data_agendamento', inicio)
+        .lte('data_agendamento', fim)
+        .neq('status', 'cancelado');
+      
+      const contador: Record<string, number> = {};
+      (contagem || []).forEach(a => {
+        contador[a.profissional_id] = (contador[a.profissional_id] || 0) + 1;
+      });
+      
+      const ranking = contexto.profissionais
+        .map(p => ({ ...p, total: contador[p.id] || 0 }))
+        .sort((a, b) => a.total - b.total);
+      
+      const escolhido = ranking[0]?.nome || contexto.profissionais[0]?.nome;
+      console.log(`   ✅ Profissional auto-escolhido: ${escolhido} (menos ocupado na semana)`);
+      return escolhido;
+    } catch (error) {
+      console.error('❌ Erro na auto-escolha de profissional:', error);
+      return contexto.profissionais[0]?.nome || null;
+    }
+  }
 
   for (const prof of contexto.profissionais) {
     const nomeLower = prof.nome.toLowerCase();
@@ -483,7 +520,7 @@ export const extrairDadosMensagem = async (
     // EXTRAIR PROFISSIONAL
     if (!dadosAcumulados.profissional) {
       console.log(`   🔍 Procurando profissional...`);
-      const profissionalEncontrado = extrairProfissional(mensagem, contexto);
+      const profissionalEncontrado = await extrairProfissional(mensagem, contexto, dadosAcumulados.data);
       if (profissionalEncontrado) {
         dadosAcumulados.profissional = profissionalEncontrado;
       }

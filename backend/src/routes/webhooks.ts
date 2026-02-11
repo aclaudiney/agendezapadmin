@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { addMessageToQueue, processMessage, messageQueue } from '../services/queue/messageQueue.js';
 import { supabase } from '../supabase.js';
+import { evolutionAPI } from '../services/whatsapp/evolutionAPI.js';
+import { transcreverAudio } from '../services/audioService.js';
 
 const router = Router();
 
@@ -122,10 +124,29 @@ async function handleIncomingMessage(companyId: string, data: any) {
             if (clientJid?.endsWith('@g.us')) continue;
 
             const phone = clientJid?.replace('@s.whatsapp.net', '');
-            const messageText = msg.message?.conversation ||
+            
+            // ✅ EXTRAÇÃO DE TEXTO (TEXTO OU ÁUDIO)
+            let messageText = msg.message?.conversation ||
                 msg.message?.extendedTextMessage?.text ||
                 msg.message?.imageMessage?.caption ||
                 msg.message?.audioMessage?.caption || '';
+
+            // ✅ SE FOR ÁUDIO, TRANSCREVER
+            if (!messageText && msg.message?.audioMessage) {
+                console.log(`🎙️ [${companyId}] Áudio recebido de ${phone}. Transcrevendo...`);
+                try {
+                    const audioBuffer = await evolutionAPI.downloadMedia(msg.key.id, companyId);
+                    if (audioBuffer) {
+                        const transcricao = await transcreverAudio(audioBuffer);
+                        if (transcricao) {
+                            messageText = transcricao;
+                            console.log(`✅ [${companyId}] Transcrição: "${messageText}"`);
+                        }
+                    }
+                } catch (audioErr) {
+                    console.error(`❌ Erro ao processar áudio:`, audioErr);
+                }
+            }
 
             if (!messageText) continue;
 
