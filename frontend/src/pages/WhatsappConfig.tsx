@@ -14,36 +14,46 @@ const WhatsappConfig: React.FC = () => {
   useEffect(() => {
     const storedCompanyId = localStorage.getItem('companyId');
     console.log('📱 Company ID do localStorage:', storedCompanyId);
-    
+
     if (!storedCompanyId) {
       setErro('❌ Company ID não encontrado. Faça login novamente.');
       setStatus('disconnected');
       return;
     }
-    
+
     setCompanyId(storedCompanyId);
   }, []);
 
   // 🔄 Função para verificar o status da instância específica
   const checkStatus = async () => {
     if (!companyId) return;
-    
+
     try {
       const response = await fetch(`${API_URL}/whatsapp/status/${companyId}`);
+      if (!response.ok) throw new Error('Falha ao buscar status');
+
       const data = await response.json();
-      
       console.log('📊 Status retornado:', data);
-      setStatus(data.status || 'disconnected');
-      
-      if (data.status === 'connected') {
+
+      const backendStatus = data.status; // 'connected', 'open', 'connecting', 'disconnected', etc.
+
+      // Mapear status da Evolution/Backend para o nosso state local
+      if (backendStatus === 'connected' || backendStatus === 'open') {
+        setStatus('connected');
         setQrCode(null);
         setShowQR(false);
-      } else if (data.qr) {
-        setQrCode(data.qr);
+      } else if (backendStatus === 'connecting' || backendStatus === 'qrcode') {
+        setStatus('connecting');
+        if (data.qr) {
+          setQrCode(data.qr);
+        }
+      } else {
+        setStatus('disconnected');
+        setQrCode(null);
       }
     } catch (error) {
       console.error("❌ Erro ao conectar com o servidor:", error);
-      setStatus('disconnected');
+      // Não mudamos o status para disconnected imediatamente para evitar flicker se for oscilação de rede
     }
   };
 
@@ -57,19 +67,19 @@ const WhatsappConfig: React.FC = () => {
     setLoading(true);
     setShowQR(true);
     setErro(null);
-    
+
     try {
       console.log('🚀 Iniciando conexão para company_id:', companyId);
-      
+
       // Avisa o backend para iniciar o processo para este cliente
-      const response = await fetch(`${API_URL}/whatsapp/connect/${companyId}`, { 
+      const response = await fetch(`${API_URL}/whatsapp/connect/${companyId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
-      
+
       const data = await response.json();
       console.log('✅ Resposta do backend:', data);
-      
+
       // Dá um pequeno delay para o backend começar a gerar o QR
       setTimeout(checkStatus, 2000);
     } catch (error) {
@@ -88,16 +98,16 @@ const WhatsappConfig: React.FC = () => {
     }
 
     if (!window.confirm("Deseja desconectar o WhatsApp?")) return;
-    
+
     try {
-      const response = await fetch(`${API_URL}/whatsapp/logout/${companyId}`, { 
+      const response = await fetch(`${API_URL}/whatsapp/logout/${companyId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
-      
+
       const data = await response.json();
       console.log('✅ Logout:', data);
-      
+
       setShowQR(false);
       setQrCode(null);
       await checkStatus();
@@ -110,7 +120,7 @@ const WhatsappConfig: React.FC = () => {
   // Monitoramento constante (polling)
   useEffect(() => {
     if (!companyId) return;
-    
+
     checkStatus();
     const interval = setInterval(checkStatus, 3000);
     return () => clearInterval(interval);
@@ -151,31 +161,30 @@ const WhatsappConfig: React.FC = () => {
         <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm flex flex-col justify-between">
           <div>
             <h3 className="text-lg font-semibold text-slate-700 mb-6">Status da Conexão</h3>
-            
+
             <div className="inline-flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-full border border-slate-100">
               <div className={`w-2.5 h-2.5 rounded-full ${status === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm font-bold text-slate-700 uppercase tracking-wider">
-                {status === 'connected' ? 'Dispositivo Conectado' : 
-                 status === 'connecting' ? 'Iniciando...' : 'Aguardando Conexão'}
+                {status === 'connected' ? 'Dispositivo Conectado' :
+                  status === 'connecting' ? 'Iniciando...' : 'Aguardando Conexão'}
               </span>
             </div>
           </div>
 
           <div className="mt-8">
             {status === 'connected' ? (
-              <button 
+              <button
                 onClick={handleLogout}
                 className="w-full py-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 border border-red-100"
               >
                 <LogOut size={20} /> Desconectar WhatsApp
               </button>
             ) : (
-              <button 
+              <button
                 onClick={handleGenerateClick}
                 disabled={showQR || loading}
-                className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 ${
-                  showQR ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                }`}
+                className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 ${showQR ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  }`}
               >
                 {loading ? <RefreshCw className="animate-spin" size={20} /> : <QrCode size={20} />}
                 {showQR ? 'Instância Iniciada' : 'Gerar Novo QR Code'}

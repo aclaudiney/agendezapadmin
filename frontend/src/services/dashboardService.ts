@@ -52,13 +52,13 @@ export const dashboardService = {
         // 2. Agendamentos - COM FILTRO DE PROFISSIONAL
         let currentAptsQuery = supabase
             .from('agendamentos')
-            .select('id, data_agendamento, status, servico_id, profissional_id, hora_agendamento, cliente_id')
+            .select('id, data_agendamento, status, servico_id, profissional_id, hora_agendamento, cliente_id, valor_pago')
             .eq('company_id', companyId)
             .gte('data_agendamento', startDate.toISOString().split('T')[0]);
 
         let prevAptsQuery = supabase
             .from('agendamentos')
-            .select('id, status, servico_id, profissional_id')
+            .select('id, status, servico_id, profissional_id, valor_pago')
             .eq('company_id', companyId)
             .gte('data_agendamento', prevStartDate.toISOString().split('T')[0])
             .lt('data_agendamento', startDate.toISOString().split('T')[0]);
@@ -87,13 +87,12 @@ export const dashboardService = {
         const prevApts = prevPeriodApts?.length || 0;
         const aptsTrend = prevApts > 0 ? ((currentApts - prevApts) / prevApts) * 100 : 0;
 
-        // CORREÇÃO: Calcular receita apenas de agendamentos FINALIZADOS (sem duplicidade)
+        // CORREÇÃO: Calcular receita usando o campo valor_pago (que contém a soma de todos os serviços)
         const calculateAppointmentRevenue = (apts: any[]) => {
             return (apts || []).reduce((total, apt) => {
                 const status = (apt.status || '').toLowerCase();
-                if (['finalizado'].includes(status)) {
-                    const servico = services?.find(s => s.id === apt.servico_id);
-                    return total + (servico?.preco || 0);
+                if (['finalizado', 'pago'].includes(status)) {
+                    return total + (parseFloat(apt.valor_pago) || 0);
                 }
                 return total;
             }, 0);
@@ -142,14 +141,13 @@ export const dashboardService = {
         // Somar agendamentos finalizados
         currentPeriodApts?.forEach(apt => {
             const status = (apt.status || '').toLowerCase();
-            if (['finalizado'].includes(status)) {
+            if (['finalizado', 'pago'].includes(status)) {
                 const prof = professionals?.find(p => p.id === apt.profissional_id);
-                const servico = services?.find(s => s.id === apt.servico_id);
-                if (prof && servico) {
+                if (prof) {
                     if (!profRanking[prof.id]) {
                         profRanking[prof.id] = { total: 0, count: 0, nome: prof.nome };
                     }
-                    profRanking[prof.id].total += servico.preco;
+                    profRanking[prof.id].total += (parseFloat(apt.valor_pago) || 0);
                     profRanking[prof.id].count += 1;
                 }
             }
@@ -183,7 +181,7 @@ export const dashboardService = {
                     cliente_nome: clients?.find(c => c.id === apt.cliente_id)?.nome || 'Cliente Desconhecido',
                     servico_nome: services?.find(s => s.id === apt.servico_id)?.nome || 'Serviço Desconhecido',
                     profissional_nome: professionals?.find(p => p.id === apt.profissional_id)?.nome || 'Profissional Desconhecido',
-                    valor: services?.find(s => s.id === apt.servico_id)?.preco || 0
+                    valor: parseFloat(apt.valor_pago) || 0
                 })) || []
         };
     }

@@ -844,7 +844,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       </div>
 
       <div className="px-4 py-8 max-w-7xl mx-auto">
-        {Object.entries(servicosPorCategoria).map(([categoria, items]) => (
+        {Object.entries(servicosPorCategoria as Record<string, Servico[]>).map(([categoria, items]) => (
           <div key={categoria} className="mb-12">
             <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-3 border-b-2 border-cyan-500">{categoria}</h2>
 

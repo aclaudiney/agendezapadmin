@@ -5,10 +5,10 @@
  */
 
 import express from 'express';
-import { 
-  buscarConversasPorEmpresa, 
+import {
+  buscarConversasPorEmpresa,
   buscarMensagensConversa,
-  buscarEstatisticasConversas 
+  buscarEstatisticasConversas
 } from '../services/messageLoggerService.js';
 
 const router = express.Router();
@@ -21,9 +21,9 @@ const router = express.Router();
 router.post('/send-message', async (req, res) => {
   try {
     const { companyId, clientPhone, message } = req.body;
-    
+
     console.log(`📤 [CRM] Enviando mensagem para: ${clientPhone}`);
-    
+
     if (!companyId || !clientPhone || !message) {
       return res.status(400).json({
         success: false,
@@ -31,12 +31,12 @@ router.post('/send-message', async (req, res) => {
       });
     }
 
-    // Importar função de envio do whatsapp.ts
-    const { enviarMensagemManual } = await import('../whatsapp.js');
-    
+    // Importar a Evolution API
+    const { evolutionAPI } = await import('../services/whatsapp/evolutionAPI.js');
+
     try {
-      await enviarMensagemManual(companyId, clientPhone, message);
-      
+      await evolutionAPI.sendTextMessage(companyId, clientPhone, message);
+
       console.log(`✅ [CRM] Mensagem enviada com sucesso`);
 
       res.json({
@@ -45,7 +45,7 @@ router.post('/send-message', async (req, res) => {
       });
     } catch (error: any) {
       console.error('❌ [CRM] Erro ao enviar:', error);
-      
+
       // Erro específico se WhatsApp não está conectado
       if (error.message.includes('não está conectado')) {
         return res.status(400).json({
@@ -53,7 +53,7 @@ router.post('/send-message', async (req, res) => {
           error: 'WhatsApp não está conectado para esta empresa. Conecte primeiro!'
         });
       }
-      
+
       throw error;
     }
   } catch (error: any) {
@@ -73,11 +73,11 @@ router.post('/send-message', async (req, res) => {
 router.get('/conversations/:companyId', async (req, res) => {
   try {
     const { companyId } = req.params;
-    
+
     console.log(`📊 [CRM] Buscando conversas da empresa: ${companyId}`);
-    
+
     const conversas = await buscarConversasPorEmpresa(companyId);
-    
+
     res.json({
       success: true,
       data: conversas
@@ -99,11 +99,11 @@ router.get('/conversations/:companyId', async (req, res) => {
 router.get('/messages/:companyId/:phone', async (req, res) => {
   try {
     const { companyId, phone } = req.params;
-    
+
     console.log(`📊 [CRM] Buscando mensagens: ${companyId} - ${phone}`);
-    
+
     const mensagens = await buscarMensagensConversa(companyId, phone);
-    
+
     res.json({
       success: true,
       data: mensagens
@@ -125,11 +125,11 @@ router.get('/messages/:companyId/:phone', async (req, res) => {
 router.get('/stats/:companyId', async (req, res) => {
   try {
     const { companyId } = req.params;
-    
+
     console.log(`📊 [CRM] Buscando estatísticas: ${companyId}`);
-    
+
     const stats = await buscarEstatisticasConversas(companyId);
-    
+
     res.json({
       success: true,
       data: stats

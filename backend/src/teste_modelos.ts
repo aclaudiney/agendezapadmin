@@ -13,7 +13,7 @@ async function listarModelos() {
 
     try {
         const response = await axios.get(url);
-        const modelos = response.data.models;
+        const modelos = (response.data as any)?.models || [];
 
         console.log("\n✅ Modelos encontrados:");
         modelos.forEach((m: any) => {

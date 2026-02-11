@@ -197,8 +197,8 @@ const MiniCalendar = ({
         </button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center mb-2">
-        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(d => (
-          <span key={d} className="text-[10px] font-bold text-slate-400">{d}</span>
+        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, index) => (
+          <span key={`weekday-${index}`} className="text-[10px] font-bold text-slate-400">{d}</span>
         ))}
       </div>
       <div className="grid grid-cols-7 gap-1 place-items-center">
@@ -225,6 +225,8 @@ const Appointments: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [agendamentos, setAgendamentos] = useState<any[]>([]);
+  const [agendamentoServicos, setAgendamentoServicos] = useState<any[]>([]);
+  const [buscaServico, setBuscaServico] = useState('');
   const [clientes, setClientes] = useState<any[]>([]);
   const [profissionais, setProfissionais] = useState<any[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
@@ -250,6 +252,7 @@ const Appointments: React.FC = () => {
     cliente_id: '',
     profissional_id: '',
     servico_id: '',
+    servicos_ids: [] as string[],
     data_agendamento: '',
     hora_agendamento: '',
     status: 'pendente',
@@ -296,12 +299,20 @@ const Appointments: React.FC = () => {
       } catch {}
 
       // ✅ BUSCAR DADOS FILTRANDO POR COMPANY_ID
-      const [agendamentosRes, clientesRes, profissionaisRes, servicosRes] = await Promise.all([
+      const [agendamentosRes, agendamentoServicosRes, clientesRes, profissionaisRes, servicosRes] = await Promise.all([
         supabase.from('agendamentos')
-          .select('id, cliente_id, profissional_id, servico_id, data_agendamento, hora_agendamento, status, origem, forma_pagamento, valor_pago, data_pagamento, company_id, created_at')
+          .select(`
+            *,
+            agendamento_servicos(
+              servico_id,
+              valor
+            )
+          `)
           .eq('company_id', companyId)
           .order('data_agendamento', { ascending: true })
           .order('hora_agendamento', { ascending: true }),
+        supabase.from('agendamento_servicos')
+          .select('agendamento_id, servico_id, valor'),
         supabase.from('clientes')
           .select('id, nome, telefone')
           .eq('company_id', companyId),
@@ -314,6 +325,7 @@ const Appointments: React.FC = () => {
       ]);
 
       setAgendamentos(agendamentosRes.data || []);
+      setAgendamentoServicos(agendamentoServicosRes.data || []);
       setClientes(clientesRes.data || []);
       setProfissionais(profissionaisRes.data || []);
       setServicos(servicosRes.data || []);
@@ -335,123 +347,138 @@ const Appointments: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErro('');
     setSaving(true);
+    setErro('');
 
-    if (!formData.cliente_id || !formData.profissional_id || !formData.servico_id || !formData.data_agendamento || !formData.hora_agendamento) {
-      setErro('Preencha todos os campos obrigatórios');
-      setSaving(false);
-      return;
-    }
+    // ✅ Calcular total real somando os preços dos serviços selecionados
+    const valorTotal = formData.servicos_ids.reduce((sum, id) => {
+      const s = servicos.find(item => item.id === id);
+      return sum + parseFloat(s?.preco?.toString() || '0');
+    }, 0);
 
-    // Validação de especialidade do profissional
-    const profissionalSel = profissionais.find(p => p.id === formData.profissional_id);
-    const servicoSel = servicos.find(s => s.id === formData.servico_id);
-    if (profissionalSel && servicoSel && profissionalSel.especialidade) {
-      const esp = String(profissionalSel.especialidade || '').toLowerCase();
-      const nomeServico = String(servicoSel.nome || '').toLowerCase();
-      if (!esp.includes(nomeServico)) {
-        setErro(`${profissionalSel.nome} não realiza "${servicoSel.nome}"`);
-        setSaving(false);
-        return;
-      }
-    }
+    const servicosSelecionados = formData.servicos_ids.map(id => {
+      const s = servicos.find(item => item.id === id);
+      return { ...s, servico_id: id };
+    });
+
+    console.log('=== SALVANDO ===');
+    console.log('Serviços:', servicosSelecionados);
+    console.log('Valor total:', valorTotal);
 
     try {
       const companyId = localStorage.getItem('companyId');
-      if (!companyId) {
-        setErro('Company ID não encontrado');
-        setSaving(false);
-        return;
-      }
+      if (!companyId) throw new Error('Company ID não encontrado');
 
-      const isEdit = !!formData.id;
-      let agendamentoId = formData.id;
-
-      const dataToSave: any = {
-        company_id: companyId,
+      // 1. Dados básicos do agendamento
+      const payload = {
         cliente_id: formData.cliente_id,
         profissional_id: formData.profissional_id,
-        servico_id: formData.servico_id,
+        servico_id: formData.servicos_ids.length > 0 ? formData.servicos_ids[0] : formData.servico_id,
         data_agendamento: formData.data_agendamento,
         hora_agendamento: formData.hora_agendamento,
         status: formData.status,
-        forma_pagamento: formData.status === 'finalizado' ? (formData.forma_pagamento || 'pix') : null,
-        valor_pago: formData.status === 'finalizado' ? parseFloat(String(formData.valor_pago)) : null,
-        data_pagamento: formData.status === 'finalizado' ? new Date().toISOString() : null,
+        forma_pagamento: formData.forma_pagamento || null,
+        valor_pago: valorTotal,
+        company_id: companyId
       };
 
-      if (isEdit) {
-        const { error } = await supabase
+      let agendamentoId = formData.id;
+
+      if (agendamentoId) {
+        // UPDATE
+        const { error: updateError } = await supabase
           .from('agendamentos')
-          .update(dataToSave)
-          .eq('id', formData.id)
-          .eq('company_id', companyId);
-
-        if (error) throw error;
+          .update(payload)
+          .eq('id', agendamentoId);
+        if (updateError) throw updateError;
       } else {
-        dataToSave.origem = 'web';
-        const { data, error } = await supabase.from('agendamentos').insert([dataToSave]).select();
-        if (error) throw error;
-        if (data && data.length > 0) {
-          agendamentoId = data[0].id;
-        }
+        // INSERT
+        const { data: insertData, error: insertError } = await supabase
+          .from('agendamentos')
+          .insert([payload])
+          .select()
+          .single();
+        if (insertError) throw insertError;
+        agendamentoId = insertData.id;
       }
 
-      // ✅ LÓGICA FINANCEIRA SE STATUS FOR FINALIZADO
-      if (formData.status === 'finalizado') {
-        const cliente = clientes.find(c => c.id === formData.cliente_id);
-        const servico = servicos.find(s => s.id === formData.servico_id);
+      // 2. Deletar serviços antigos
+      await supabase
+        .from('agendamento_servicos')
+        .delete()
+        .eq('agendamento_id', agendamentoId);
+
+      // 3. Inserir novos serviços
+      if (formData.servicos_ids.length > 0) {
+        const servicosParaInserir = formData.servicos_ids.map(sid => {
+          const s = servicos.find(item => item.id === sid);
+          return {
+            agendamento_id: agendamentoId,
+            servico_id: sid,
+            valor: parseFloat(s?.preco?.toString() || '0')
+          };
+        });
         
-        // Verificar se já existe registro financeiro para este agendamento
-        const { data: existingFin } = await supabase
-          .from('financeiro')
-          .select('id')
-          .eq('agendamento_id', agendamentoId)
-          .eq('company_id', companyId)
-          .maybeSingle();
-
-        const finData = {
-          company_id: companyId,
-          tipo: 'receita',
-          descricao: `${cliente?.nome || 'Cliente'} - ${servico?.nome || 'Serviço'}`,
-          valor: parseFloat(String(formData.valor_pago)),
-          forma_pagamento: (formData.forma_pagamento || 'pix').toLowerCase(),
-          agendamento_id: agendamentoId,
-          cliente_id: formData.cliente_id,
-          data_transacao: new Date().toISOString()
-        };
-
-        if (existingFin) {
-          await supabase.from('financeiro').update(finData).eq('id', existingFin.id);
-        } else {
-          await supabase.from('financeiro').insert([finData]);
-        }
+        const { error: sError } = await supabase
+          .from('agendamento_servicos')
+          .insert(servicosParaInserir);
+        if (sError) throw sError;
       }
 
+      // 4. ATUALIZAR FINANCEIRO COM NOVO VALOR (CRÍTICO!)
+      const cliente = clientes.find(c => c.id === formData.cliente_id);
+      
+      const { error: erroFinanceiro } = await supabase
+        .from('financeiro')
+        .upsert({
+          company_id: companyId,
+          agendamento_id: agendamentoId,
+          tipo: 'receita',
+          categoria: 'agendamento',
+          descricao: `Agendamento - ${cliente?.nome || 'Cliente'}`,
+          valor: valorTotal,
+          metodo_pagamento: formData.forma_pagamento || 'pendente',
+          data_transacao: formData.data_agendamento,
+          status: formData.status === 'finalizado' ? 'pago' : 'pendente',
+          data_pagamento: formData.status === 'finalizado' ? new Date().toISOString().split('T')[0] : null,
+        }, { 
+          onConflict: 'agendamento_id' 
+        });
+      
+      if (erroFinanceiro) {
+        console.error('Erro ao atualizar financeiro:', erroFinanceiro);
+        throw erroFinanceiro;
+      }
+
+      console.log('✅ Financeiro atualizado com valor:', valorTotal);
+
+      // 5. Sucesso!
+      alert('Agendamento atualizado com sucesso!');
       setShowModal(false);
+      fetchData(); // Recarregar tudo
       setFormData({
         id: '',
         cliente_id: '',
         profissional_id: '',
         servico_id: '',
-        data_agendamento: '',
+        servicos_ids: [],
+        data_agendamento: new Date().toISOString().split('T')[0],
         hora_agendamento: '',
         status: 'pendente',
         forma_pagamento: '',
         valor_pago: '',
       });
-      await fetchData();
     } catch (error: any) {
-      console.error('❌ Erro ao salvar agendamento:', error);
-      setErro(error?.message || 'Erro ao salvar agendamento');
+      console.error('Erro ao salvar:', error);
+      alert(`Erro: ${error.message}`);
+      setErro(error.message || 'Erro ao salvar');
     } finally {
       setSaving(false);
     }
   };
 
   // ✅ ATUALIZAR STATUS E ABRIR MODAL DE PAGAMENTO
-  const handleAtualizarStatus = async (aptId: string, novoStatusValue: string) => {
+  const handleAtualizarStatus = async (aptId: string, novoStatusValue: string, novaFormaPagamento?: string) => {
     try {
       // ✅ PEGAR COMPANY_ID
       const companyId = localStorage.getItem('companyId');
@@ -461,21 +488,32 @@ const Appointments: React.FC = () => {
         return;
       }
 
-      // SE FOR FINALIZADO, ABRIR MODAL DE EDIÇÃO COM CAMPOS DE PAGAMENTO
-      if (novoStatusValue === 'finalizado') {
+      // SE FOR FINALIZADO (e não vier de uma atualização rápida de pagamento), ABRIR MODAL
+      if (novoStatusValue === 'finalizado' && !novaFormaPagamento) {
         const apt = agendamentos.find(a => a.id === aptId);
         if (apt) {
-          const servico = servicos.find(s => s.id === apt.servico_id);
+          const aptServicos = agendamentoServicos
+            .filter(as => as.agendamento_id === apt.id)
+            .map(as => as.servico_id);
+            
+          const ids = aptServicos.length > 0 ? aptServicos : (apt.servico_id ? [apt.servico_id] : []);
+          
+          const valorTotal = ids.reduce((total, id) => {
+            const s = servicos.find(serv => serv.id === id);
+            return total + (s?.preco || 0);
+          }, 0);
+
           setFormData({
             id: apt.id,
             cliente_id: apt.cliente_id,
             profissional_id: apt.profissional_id,
-            servico_id: apt.servico_id,
+            servico_id: apt.servico_id || ids[0] || '',
+            servicos_ids: ids,
             data_agendamento: apt.data_agendamento,
             hora_agendamento: apt.hora_agendamento,
             status: 'finalizado',
             forma_pagamento: apt.forma_pagamento || 'pix',
-            valor_pago: apt.valor_pago || servico?.preco || '',
+            valor_pago: apt.valor_pago || valorTotal || '',
           });
           setShowModal(true);
           setEditandoId(null);
@@ -483,10 +521,14 @@ const Appointments: React.FC = () => {
         return;
       }
 
-      // PARA OUTROS STATUS, APENAS ATUALIZAR
-      const updateData = {
+      // PARA OUTROS STATUS OU ATUALIZAÇÃO RÁPIDA DE PAGAMENTO
+      const updateData: any = {
         status: novoStatusValue
       };
+
+      if (novaFormaPagamento) {
+        updateData.forma_pagamento = novaFormaPagamento;
+      }
 
       console.log('🔄 Atualizando com dados:', updateData);
 
@@ -507,7 +549,8 @@ const Appointments: React.FC = () => {
       setAgendamentos(agendamentos.map(apt =>
         apt.id === aptId ? { 
           ...apt, 
-          status: novoStatusValue
+          status: novoStatusValue,
+          forma_pagamento: novaFormaPagamento || apt.forma_pagamento
         } : apt
       ));
 
@@ -755,130 +798,140 @@ const Appointments: React.FC = () => {
 
           {/* TABELA */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="min-w-full text-left">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100">
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Cliente</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden sm:table-cell">Serviço</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden md:table-cell">Profissional</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data/Hora</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Valor</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Pagamento</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="px-4 md:px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Ação</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase">Cliente</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase hidden sm:table-cell">Serviço(s)</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase hidden md:table-cell">Profissional</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase">Data/Hora</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase hidden lg:table-cell">Valor</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase hidden lg:table-cell">Origem</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase hidden lg:table-cell">Pagamento</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase">Status</th>
+                <th className="sticky right-0 bg-white shadow-[-10px_0_10px_-5px_rgba(0,0,0,0.1)] px-4 py-3 text-xs font-bold text-slate-500 uppercase text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredAgendamentos.map((apt) => {
                 const cliente = clientes.find(c => c.id === apt.cliente_id);
-                const servico = servicos.find(s => s.id === apt.servico_id);
+                const aptServicos = agendamentoServicos.filter(as => as.agendamento_id === apt.id);
+                
+                const valorTotal = aptServicos.length > 0
+                  ? aptServicos.reduce((total, as) => total + (servicos.find(s => s.id === as.servico_id)?.preco || 0), 0)
+                  : (servicos.find(s => s.id === apt.servico_id)?.preco || 0);
+
                 const profissional = profissionais.find(p => p.id === apt.profissional_id);
 
                 return (
                   <tr key={apt.id} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-4 md:px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="font-semibold text-slate-800 text-sm">{cliente?.nome}</div>
-                      <div className="text-xs text-slate-400">{cliente?.telefone}</div>
+                      <div className="text-xs text-slate-400">{formatPhone(cliente?.telefone)}</div>
                     </td>
-                    <td className="px-4 md:px-6 py-4 hidden sm:table-cell">
-                      <span className="text-sm text-slate-600">{servico?.nome}</span>
+                    <td className="px-4 py-4 hidden sm:table-cell">
+                      <div className="flex flex-wrap gap-1 max-w-[200px]">
+                        {aptServicos.length > 0 ? aptServicos.map(as => {
+                          const s = servicos.find(item => item.id === as.servico_id);
+                          return (
+                            <span key={as.servico_id} className="bg-indigo-50 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-medium border border-indigo-100">
+                              {s?.nome}
+                            </span>
+                          );
+                        }) : (
+                          <span className="bg-slate-50 text-slate-600 text-[10px] px-2 py-0.5 rounded font-medium border border-slate-100">
+                            {servicos.find(s => s.id === apt.servico_id)?.nome || 'Sem serviço'}
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 md:px-6 py-4 hidden md:table-cell">
-                      <span className="text-sm text-slate-600">{profissional?.nome || 'Sem profissional'}</span>
+                    <td className="px-4 py-4 hidden md:table-cell text-sm text-slate-600">
+                      {profissional?.nome || 'Sem profissional'}
                     </td>
-                    <td className="px-4 md:px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="text-sm text-slate-800 font-medium">{formatarDataString(apt.data_agendamento)}</div>
                       <div className="text-xs text-indigo-600 font-bold">{apt.hora_agendamento}</div>
                     </td>
-                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
-                      <span className="text-sm font-bold text-green-600">R$ {servico?.preco?.toFixed(2) || '0.00'}</span>
-                    </td>
-                    <td className="px-4 md:px-6 py-4 hidden lg:table-cell">
-                      <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded capitalize">
-                        {apt.status === 'finalizado' ? (apt.forma_pagamento || '-') : '-'}
+                    <td className="px-4 py-4 hidden lg:table-cell">
+                      <span className="text-sm font-bold text-green-600">
+                        R$ {(() => {
+                          // Soma os valores dos serviços vinculados na agendamento_servicos
+                          const servicosDoApt = agendamentoServicos.filter(as => as.agendamento_id === apt.id);
+                          if (servicosDoApt.length > 0) {
+                            return servicosDoApt.reduce((sum, as) => sum + (parseFloat(as.valor?.toString()) || 0), 0).toFixed(2);
+                          }
+                          // Fallback para o valor_pago se não houver registros na agendamento_servicos
+                          return (parseFloat(apt.valor_pago?.toString()) || 0).toFixed(2);
+                        })()}
                       </span>
                     </td>
-                    <td className="px-4 md:px-6 py-4">
-                      {editandoId === apt.id ? (
-                        <div className="flex flex-col gap-3 min-w-max">
-                          <select
-                            value={novoStatus}
-                            onChange={(e) => setNovoStatus(e.target.value)}
-                            className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
-                          >
-                            <option value="">Selecionar</option>
-                            <option value="pendente">Pendente</option>
-                            <option value="confirmado">Confirmado</option>
-                            <option value="finalizado">Finalizado</option>
-                            <option value="cancelado">Cancelado</option>
-                          </select>
-
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleAtualizarStatus(apt.id, novoStatus)}
-                              className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-                              disabled={!novoStatus}
-                            >
-                              <Check size={14} />
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditandoId(null);
-                                setNovoStatus('');
-                              }}
-                              className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(apt.status)}`}>
-                            {getStatusLabel(apt.status)}
-                          </span>
-                          <button
-                            onClick={() => {
-                              setEditandoId(apt.id);
-                              setNovoStatus(apt.status || '');
-                            }}
-                            className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
-                            title="Editar status"
-                          >
-                            <MoreVertical size={14} />
-                          </button>
-                          <button 
-                            onClick={() => {
-                              const servico = servicos.find(s => s.id === apt.servico_id);
-                              setFormData({
-                                id: apt.id,
-                                cliente_id: apt.cliente_id,
-                                profissional_id: apt.profissional_id,
-                                servico_id: apt.servico_id,
-                                data_agendamento: apt.data_agendamento,
-                                hora_agendamento: apt.hora_agendamento,
-                                status: apt.status,
-                                forma_pagamento: apt.forma_pagamento || 'pix',
-                                valor_pago: apt.valor_pago || servico?.preco || '',
-                              });
-                              setShowModal(true);
-                            }}
-                            className="p-1 text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"
-                            title="Editar agendamento"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                        </div>
-                      )}
+                    <td className="px-4 py-4 hidden lg:table-cell">
+                       {apt.origem === 'whatsapp' ? (
+                         <span className="flex items-center gap-1 text-[10px] font-bold text-green-600">💬 WhatsApp</span>
+                       ) : (
+                         <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600">🔗 Link</span>
+                       )}
                     </td>
-                    <td className="px-4 md:px-6 py-4">
-                      <button
-                        onClick={() => handleDeleteAgendamento(apt.id)}
-                        className="p-1 text-red-600 hover:bg-red-50 rounded transition opacity-0 group-hover:opacity-100"
-                        title="Deletar agendamento"
+                    <td className="px-4 py-4 hidden lg:table-cell">
+                      <select 
+                        value={apt.forma_pagamento || 'pendente'} 
+                        onChange={(e) => handleAtualizarStatus(apt.id, apt.status, e.target.value)}
+                        className="text-xs border border-slate-200 rounded p-1 bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
                       >
-                        <Trash2 size={16} />
-                      </button>
+                        <option value="pendente">Pendente</option>
+                        <option value="pix">PIX</option>
+                        <option value="dinheiro">Dinheiro</option>
+                        <option value="debito">Débito</option>
+                        <option value="credito">Crédito</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(apt.status)}`}>
+                        {getStatusLabel(apt.status)}
+                      </span>
+                    </td>
+                    <td className="sticky right-0 bg-white shadow-[-10px_0_10px_-5px_rgba(0,0,0,0.1)] px-4 py-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => {
+                            const aptServicosIds = agendamentoServicos
+                              .filter(as => as.agendamento_id === apt.id)
+                              .map(as => as.servico_id);
+                              
+                            const ids = aptServicosIds.length > 0 ? aptServicosIds : (apt.servico_id ? [apt.servico_id] : []);
+                            
+                            const valorTotal = ids.reduce((total, id) => {
+                              const s = servicos.find(serv => serv.id === id);
+                              return total + (s?.preco || 0);
+                            }, 0);
+
+                            setFormData({
+                              id: apt.id,
+                              cliente_id: apt.cliente_id,
+                              profissional_id: apt.profissional_id,
+                              servico_id: apt.servico_id || ids[0] || '',
+                              servicos_ids: ids,
+                              data_agendamento: apt.data_agendamento,
+                              hora_agendamento: apt.hora_agendamento,
+                              status: apt.status,
+                              forma_pagamento: apt.forma_pagamento || 'pix',
+                              valor_pago: apt.valor_pago || valorTotal || '',
+                            });
+                            setShowModal(true);
+                          }}
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Editar"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAgendamento(apt.id)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Excluir"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -900,10 +953,26 @@ const Appointments: React.FC = () => {
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in duration-300 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6 sticky top-0 bg-white">
-              <h3 className="text-2xl font-bold text-slate-800">Novo Agendamento</h3>
+            <div className="flex justify-between items-center mb-6 sticky top-0 bg-white z-10">
+              <h3 className="text-2xl font-bold text-slate-800">
+                {formData.id ? 'Editar Agendamento' : 'Novo Agendamento'}
+              </h3>
               <button 
-                onClick={() => setShowModal(false)}
+                onClick={() => {
+                  setShowModal(false);
+                  setFormData({
+                    id: null,
+                    cliente_id: '',
+                    profissional_id: '',
+                    servico_id: '',
+                    servicos_ids: [],
+                    data_agendamento: new Date().toISOString().split('T')[0],
+                    hora_agendamento: '',
+                    status: 'pendente',
+                    forma_pagamento: '',
+                    valor_pago: '',
+                  });
+                }}
                 className="text-slate-400 hover:text-slate-600"
               >
                 <X size={24} />
@@ -943,18 +1012,118 @@ const Appointments: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Serviço *</label>
-                <select 
-                  value={formData.servico_id}
-                  onChange={(e) => setFormData({...formData, servico_id: e.target.value})}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                >
-                  <option value="">Selecione um serviço</option>
-                  {servicos.map(s => (
-                    <option key={s.id} value={s.id}>{s.nome} - R$ {s.preco?.toFixed(2) || '0.00'}</option>
-                  ))}
-                </select>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Serviços Selecionados</label>
+                <div className="space-y-2 mb-4">
+                  {formData.servicos_ids.length === 0 ? (
+                    <p className="text-slate-400 text-xs italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-200">
+                      Nenhum serviço selecionado
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {formData.servicos_ids.map((sid, index) => {
+                        const s = servicos.find(item => item.id === sid);
+                        return (
+                          <div key={`${sid}-${index}`} className="flex items-center gap-2 bg-indigo-50/50 p-2 rounded-lg border border-indigo-100 group">
+                            <span className="flex-1 text-sm text-slate-700 font-medium">{s?.nome}</span>
+                            <span className="text-xs font-bold text-indigo-600">R$ {s?.preco?.toFixed(2)}</span>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                            const newIds = formData.servicos_ids.filter((_, i) => i !== index);
+                            
+                            // ✅ CALCULAR TOTAL COM DEBUG
+                            const novoValor = newIds.reduce((total, id) => {
+                              const serv = servicos.find(item => item.id === id);
+                              const valor = parseFloat(serv?.preco?.toString() || '0');
+                              console.log('Removendo - Serviço:', serv?.nome, 'Valor:', valor);
+                              return total + valor;
+                            }, 0);
+                            
+                            console.log('Total calculado após remoção:', novoValor);
+
+                            setFormData({
+                              ...formData,
+                              servicos_ids: newIds,
+                              servico_id: newIds[0] || '',
+                              valor_pago: novoValor || ''
+                            });
+                              }}
+                              className="text-red-400 hover:text-red-600 p-1"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Adicionar Serviço</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <input 
+                      type="text"
+                      placeholder="Buscar serviço para adicionar..."
+                      value={buscaServico}
+                      onChange={(e) => setBuscaServico(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    />
+                  </div>
+                  
+                  {buscaServico && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                      {servicos
+                        .filter(s => s.nome.toLowerCase().includes(buscaServico.toLowerCase()))
+                        .map(s => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => {
+                              if (formData.servicos_ids.includes(s.id)) {
+                                toast.error('Serviço já adicionado');
+                                return;
+                              }
+                              const newIds = [...formData.servicos_ids, s.id];
+                              
+                              // ✅ CALCULAR TOTAL COM DEBUG
+                              const novoValor = newIds.reduce((total, id) => {
+                                const serv = servicos.find(item => item.id === id);
+                                const valor = parseFloat(serv?.preco?.toString() || '0');
+                                console.log('Adicionando - Serviço:', serv?.nome, 'Valor:', valor);
+                                return total + valor;
+                              }, 0);
+                              
+                              console.log('Total calculado após adição:', novoValor);
+
+                              setFormData({
+                                ...formData,
+                                servicos_ids: newIds,
+                                servico_id: newIds[0] || '',
+                                valor_pago: novoValor || ''
+                              });
+                              setBuscaServico('');
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-indigo-50 flex justify-between items-center transition-colors border-b border-slate-50 last:border-0"
+                          >
+                            <span className="text-sm text-slate-700">{s.nome}</span>
+                            <span className="text-xs font-bold text-indigo-600">R$ {s.preco?.toFixed(2)}</span>
+                          </button>
+                        ))}
+                      {servicos.filter(s => s.nome.toLowerCase().includes(buscaServico.toLowerCase())).length === 0 && (
+                        <div className="px-4 py-3 text-xs text-slate-400 italic text-center">Nenhum serviço encontrado</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                  <span className="text-sm font-bold text-slate-700">Total:</span>
+                  <span className="text-lg font-bold text-green-600">
+                    R$ {parseFloat(formData.valor_pago?.toString() || '0').toFixed(2)}
+                  </span>
+                </div>
               </div>
 
               <div>

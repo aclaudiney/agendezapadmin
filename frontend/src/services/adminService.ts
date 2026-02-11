@@ -250,7 +250,11 @@ export const adminService = {
               if (itens && itens.length > 0) {
                 console.log(`        Encontrados ${itens.length} itens. Deletando individualmente...`);
                 for (const item of itens) {
-                  await supabase.from(tabela).delete().eq('id', item.id).catch(e => console.error('Erro delete item:', e));
+                  try {
+                    await supabase.from(tabela).delete().eq('id', item.id);
+                  } catch (e) {
+                    console.error('Erro delete item:', e);
+                  }
                 }
               }
             }
@@ -310,24 +314,29 @@ export const adminService = {
     }
   },
 
-  // ✅ GET STATUS SESSÃO WHATSAPP (Via Supabase Direto)
+  // ✅ GET STATUS SESSÃO WHATSAPP (Via Backend para Sincronização Real-time)
   async getStatusWhatsApp(companyId: string) {
     try {
-      const { data, error } = await supabase
+      const response = await axios.get(`${API_URL}/whatsapp/status/${companyId}`);
+      return {
+        status: response.data?.status || 'disconnected',
+        qr_code: response.data?.qr || null,
+        updated_at: response.data?.updated_at
+      };
+    } catch (error) {
+      console.error('❌ Erro ao buscar status WhatsApp:', error);
+      // Fallback pro banco se o backend falhar
+      const { data } = await supabase
         .from('whatsapp_sessions')
         .select('*')
         .eq('company_id', companyId)
         .maybeSingle();
 
-      if (error) throw error;
       return {
         status: data?.status || 'disconnected',
         qr_code: data?.qr_code || null,
         updated_at: data?.updated_at
       };
-    } catch (error) {
-      console.error('❌ Erro ao buscar status WhatsApp:', error);
-      throw error;
     }
   },
 

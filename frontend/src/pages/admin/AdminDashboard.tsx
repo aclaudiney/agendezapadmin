@@ -95,6 +95,11 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleVerDetalhes = (empresa: Empresa) => {
+    setSelectedEmpresa(empresa);
+    setShowDetailModal(true);
+  };
+
   const formatarMoeda = (valor: number) => {
     return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };

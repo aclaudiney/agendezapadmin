@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { TrendingUp, Plus, Trash2, Edit2, X, AlertCircle, Filter } from 'lucide-react';
 
@@ -41,14 +42,13 @@ export default function Financeiro() {
 
   // ✅ NORMALIZAR FORMA DE PAGAMENTO
   const normalizarFormaPagamento = (forma: string | null | undefined): string => {
-    if (!forma) return '';
+    if (!forma) return 'pendente';
     const normalized = forma.toLowerCase().trim();
-    // ✅ VALIDAR CONTRA AS PALAVRAS-CHAVE CORRETAS
     if (normalized === 'dinheiro') return 'dinheiro';
     if (normalized === 'pix') return 'pix';
     if (normalized === 'débito' || normalized === 'debito') return 'débito';
     if (normalized === 'crédito' || normalized === 'credito') return 'crédito';
-    return forma.toLowerCase();
+    return normalized;
   };
 
   // ✅ INICIALIZAR DATA INÍCIO COMO PRIMEIRO DIA DO MÊS
@@ -59,10 +59,9 @@ export default function Financeiro() {
   }, []);
 
   useEffect(() => {
-    if (dataInicio) {
-      carregarReceitas();
-      carregarDespesas();
-    }
+    console.log('Filtros alterados:', { dataInicio, dataFim, filtroFormaPagamento });
+    carregarReceitas();
+    carregarDespesas();
   }, [dataInicio, dataFim, filtroFormaPagamento]);
 
   // ✅ CARREGAR RECEITAS COM FILTRO POR COMPANY_ID E DATAS CORRETAS
@@ -80,16 +79,10 @@ export default function Financeiro() {
       const inicio = dataInicio || new Date().toISOString().split('T')[0];
       const fim = dataFim || new Date().toISOString().split('T')[0];
 
-      const [{ data: apts, error: aptErr }, { data: servs, error: servErr }, { data: clis, error: cliErr }] = await Promise.all([
+      const [{ data: apts, error: aptErr }, { data: clis, error: cliErr }] = await Promise.all([
         supabase
           .from('agendamentos')
-          .select('id, status, servico_id, cliente_id, data_pagamento, forma_pagamento')
-          .eq('company_id', companyId)
-          .gte('data_agendamento', inicio)
-          .lte('data_agendamento', fim),
-        supabase
-          .from('servicos')
-          .select('id, nome, preco')
+          .select('id, status, servico_id, cliente_id, data_pagamento, forma_pagamento, valor_pago, data_agendamento')
           .eq('company_id', companyId),
         supabase
           .from('clientes')
@@ -97,26 +90,41 @@ export default function Financeiro() {
           .eq('company_id', companyId)
       ]);
 
-      if (aptErr || servErr || cliErr) {
-        console.error('❌ Erro ao buscar dados:', aptErr || servErr || cliErr);
+      if (aptErr || cliErr) {
+        console.error('❌ Erro ao buscar dados:', aptErr || cliErr);
         setErro('Erro ao carregar receitas');
         setLoading(false);
         return;
       }
 
-      const servMap = new Map((servs || []).map(s => [s.id, s]));
       const cliMap = new Map((clis || []).map(c => [c.id, c]));
-      const finalizados = (apts || []).filter(a => (a.status || '').toLowerCase() === 'finalizado');
+      
+      // ✅ LÓGICA IDÊNTICA AO DASHBOARD (CORRIGIDA)
+      const finalizados = (apts || []).filter(a => {
+        const status = (a.status || '').toLowerCase().trim();
+        const dataApt = a.data_agendamento;
+        
+        // Log para debug se necessário
+        // console.log(`Apt ${a.id}: status=${status}, data=${dataApt}, valor=${a.valor_pago}`);
 
-      // ✅ Construir uma lista única por agendamento finalizado, usando o valor do serviço
+        const estaNoPeriodo = (!dataInicio || dataApt >= dataInicio) && (!dataFim || dataApt <= dataFim);
+        const statusValido = status === 'finalizado' || status === 'pago';
+        
+        return statusValido && estaNoPeriodo;
+      });
+
+      console.log('✅ Agendamentos filtrados para o financeiro:', finalizados.length);
+
+      // ✅ Construir a lista de receitas usando o campo valor_pago
       let receitasDerivadas: Receita[] = finalizados.map(a => {
-        const srv = servMap.get(a.servico_id);
         const cli = cliMap.get(a.cliente_id);
+        const valorNumerico = parseFloat(a.valor_pago?.toString() || '0');
+        
         return {
           id: a.id,
-          descricao: `${cli?.nome || 'Cliente'} - ${srv?.nome || 'Serviço'}`,
-          valor: srv?.preco || 0,
-          data_transacao: a.data_pagamento || new Date().toISOString(),
+          descricao: `Agendamento - ${cli?.nome || 'Cliente'}`,
+          valor: valorNumerico,
+          data_transacao: a.data_pagamento || a.data_agendamento || new Date().toISOString(),
           forma_pagamento: normalizarFormaPagamento(a.forma_pagamento),
           agendamento_id: a.id
         } as Receita;
@@ -177,7 +185,7 @@ export default function Financeiro() {
   };
 
   // ✅ SALVAR DESPESA
-  const handleSubmitDespesa = async (e: React.FormEvent) => {
+  const handleSubmitDespesa = async (e: FormEvent) => {
     e.preventDefault();
     setErro('');
 
@@ -308,19 +316,19 @@ export default function Financeiro() {
   const totalDespesas = despesas.reduce((sum, d) => sum + (d.valor || 0), 0);
   const saldoLiquido = totalReceita - totalDespesas;
 
-  // ✅ RECEITAS POR FORMA DE PAGAMENTO
+  // ✅ RECEITAS POR FORMA DE PAGAMENTO (Normalizado para os cards)
   const totaisReceitasPorForma = {
     dinheiro: receitas
-      .filter(r => r.forma_pagamento === 'dinheiro')
+      .filter(r => normalizarFormaPagamento(r.forma_pagamento) === 'dinheiro')
       .reduce((sum, r) => sum + (r.valor || 0), 0),
     pix: receitas
-      .filter(r => r.forma_pagamento === 'pix')
+      .filter(r => normalizarFormaPagamento(r.forma_pagamento) === 'pix')
       .reduce((sum, r) => sum + (r.valor || 0), 0),
     débito: receitas
-      .filter(r => r.forma_pagamento === 'débito')
+      .filter(r => normalizarFormaPagamento(r.forma_pagamento) === 'débito')
       .reduce((sum, r) => sum + (r.valor || 0), 0),
     crédito: receitas
-      .filter(r => r.forma_pagamento === 'crédito')
+      .filter(r => normalizarFormaPagamento(r.forma_pagamento) === 'crédito')
       .reduce((sum, r) => sum + (r.valor || 0), 0),
   };
 

@@ -50,7 +50,7 @@ export const converterAudioParaTexto = async (
       }
     );
 
-    const texto = response.data.text;
+    const texto = (response.data as any)?.text;
 
     if (!texto) {
       console.error(`❌ [AUDIO] Resposta vazia da API`);

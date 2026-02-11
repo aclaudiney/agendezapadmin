@@ -1,5 +1,5 @@
 import { db, supabase } from '../supabase.js';
-import { enviarMensagemManual } from '../whatsapp.js';
+import { evolutionAPI } from './whatsapp/evolutionAPI.js';
 import fs from 'fs';
 import path from 'path';
 import { differenceInCalendarDays, differenceInMinutes, format } from 'date-fns';
@@ -14,53 +14,65 @@ interface FollowUpSettings {
 }
 
 export const FollowUpService = {
-    getModes(companyId: string, settings: FollowUpSettings) {
-        const baseDir = path.resolve(process.cwd(), 'backend', 'logs');
-        const file = path.join(baseDir, `followup_modes_${companyId}.json`);
-        let fileModes: any[] = [];
+    async getModes(companyId: string, settings: FollowUpSettings) {
         try {
-            if (fs.existsSync(file)) {
-                const raw = fs.readFileSync(file, 'utf-8');
-                const parsed = JSON.parse(raw);
-                fileModes = Array.isArray(parsed) ? parsed : [];
-            }
-        } catch {
-            fileModes = [];
-        }
+            const { data: dbModes, error } = await supabase
+                .from('followup_modes')
+                .select('*')
+                .eq('company_id', companyId);
 
-        const defaultMode = {
-            id: 'default',
-            name: 'Aviso',
-            is_active: true,
-            warning_time: settings.warning_time || '08:00:00',
-            reminder_minutes: settings.reminder_minutes ?? 60,
-            message_template_warning: settings.message_template_warning || '',
-            message_template_reminder: settings.message_template_reminder || '',
-            trigger_type: 'time_fixed',
-            trigger_days: null
-        };
+            if (error) throw error;
 
-        const merged = [defaultMode, ...fileModes.filter(m => String(m?.id) !== 'default')];
-        const normalized = merged.map((m: any) => {
-            const triggerType = m.trigger_type
-                || ((m.trigger_days !== undefined && m.trigger_days !== null) ? 'dias_apos' : (m.name && String(m.name).toLowerCase().includes('lembrete') ? 'antecedencia' : 'time_fixed'));
-            const triggerDays = triggerType === 'dias_apos' ? (m.trigger_days ?? 10) : null;
-            return {
-                id: String(m.id),
-                name: m.name || 'Modo',
-                is_active: !!m.is_active,
-                warning_time: m.warning_time || '08:00:00',
-                reminder_minutes: m.reminder_minutes ?? 60,
-                message_template_warning: m.message_template_warning || '',
-                message_template_reminder: m.message_template_reminder || '',
-                trigger_type: triggerType,
-                trigger_days: triggerDays
+            const fileModes = dbModes || [];
+            
+            const defaultMode = {
+                id: 'default',
+                name: 'Aviso',
+                is_active: true,
+                warning_time: settings.warning_time || '08:00:00',
+                reminder_minutes: settings.reminder_minutes ?? 60,
+                message_template_warning: settings.message_template_warning || '',
+                message_template_reminder: settings.message_template_reminder || '',
+                trigger_type: 'time_fixed',
+                trigger_days: null
             };
-        });
 
-        const uniq = new Map<string, any>();
-        for (const m of normalized) uniq.set(m.id, m);
-        return Array.from(uniq.values());
+            const merged = [defaultMode, ...fileModes.filter(m => String(m?.id) !== 'default')];
+            const normalized = merged.map((m: any) => {
+                const triggerType = m.trigger_type
+                    || ((m.trigger_days !== undefined && m.trigger_days !== null) ? 'dias_apos' : (m.name && String(m.name).toLowerCase().includes('lembrete') ? 'antecedencia' : 'time_fixed'));
+                const triggerDays = triggerType === 'dias_apos' ? (m.trigger_days ?? 10) : null;
+                return {
+                    id: String(m.id || m.mode), // Fallback para mode se id não existir
+                    name: m.name || m.mode || 'Modo',
+                    is_active: m.is_active !== undefined ? !!m.is_active : true,
+                    warning_time: m.warning_time || '08:00:00',
+                    reminder_minutes: m.reminder_minutes ?? 60,
+                    message_template_warning: m.message_template_warning || (m.settings?.message_template_warning) || '',
+                    message_template_reminder: m.message_template_reminder || (m.settings?.message_template_reminder) || '',
+                    trigger_type: triggerType,
+                    trigger_days: triggerDays
+                };
+            });
+
+            const uniq = new Map<string, any>();
+            for (const m of normalized) uniq.set(m.id, m);
+            return Array.from(uniq.values());
+        } catch (error) {
+            console.error(`❌ [FOLLOW-UP] Erro ao carregar modos do banco:`, error);
+            return [];
+        }
+    },
+
+    async setFollowUpMode(companyId: string, mode: string, settings: any) {
+        return await supabase
+            .from('followup_modes')
+            .upsert({ 
+                company_id: companyId, 
+                mode, 
+                settings, 
+                updated_at: new Date().toISOString() 
+            }, { onConflict: 'company_id' });
     },
     /**
      * Processa todas as empresas para verificar follow-ups
@@ -88,7 +100,7 @@ export const FollowUpService = {
             return; // Follow-up desativado ou não configurado
         }
 
-        const modes = this.getModes(companyId, settings as FollowUpSettings).filter(m => m.is_active);
+        const modes = (await this.getModes(companyId, settings as FollowUpSettings)).filter(m => m.is_active);
         if (modes.length === 0) return;
 
         const hoje = new Date();
@@ -107,9 +119,9 @@ export const FollowUpService = {
             clienteModes.set(String(c.id), new Set(ids.map(String)));
         }
 
-        const agendamentosHoje = await db.getAgendamentos(companyId, { 
+        const agendamentosHoje = await db.getAgendamentos(companyId, {
             data: dataHojeStr,
-            avisado: false 
+            avisado: false
         });
         const agendamentos = (agendamentosHoje || []).filter((a: any) => a?.status !== 'cancelado' && a?.status !== 'finalizado');
 
@@ -234,9 +246,9 @@ export const FollowUpService = {
 
     async sendMessage(companyId: string, telefone: string, agendamentoId: string, type: string, message: string) {
         try {
-            await enviarMensagemManual(companyId, telefone, message);
+            await evolutionAPI.sendTextMessage(companyId, telefone, message);
             await db.logFollowUpMessage(companyId, agendamentoId, type, 'sent');
-            
+
             // ✅ MARCAR COMO AVISADO PARA EVITAR LOOP
             await supabase
                 .from('agendamentos')
@@ -246,7 +258,7 @@ export const FollowUpService = {
         } catch (error: any) {
             console.error(`❌ [FOLLOW-UP] Erro ao enviar (${type}):`, error.message);
             await db.logFollowUpMessage(companyId, agendamentoId, type, 'failed');
-            
+
             // Se falhou por WhatsApp desconectado, registrar log detalhado
             if (error.message?.includes('WhatsApp não está conectado')) {
                 console.warn(`⚠️ [FOLLOW-UP] Falha de conexão detectada para empresa ${companyId}`);

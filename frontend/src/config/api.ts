@@ -1,19 +1,19 @@
 // ✅ DETECTA AUTOMATICAMENTE O AMBIENTE
 const getApiUrl = (): string => {
-  // 1️⃣ Usa variável de ambiente se existir (Vercel/Produção)
-  if (import.meta.env.VITE_API_URL) {
-    console.log('🌐 Usando API URL da Vercel:', import.meta.env.VITE_API_URL);
-    return import.meta.env.VITE_API_URL;
-  }
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-  // 2️⃣ Se estiver em localhost (desenvolvimento), usa localhost
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    console.log('💻 Ambiente LOCAL - usando localhost:3001');
+  // 1️⃣ Se estiver em localhost, SEMPRE tenta falar com o backend local primeiro
+  if (isLocal) {
+    console.log('💻 Ambiente LOCAL detectado - Priorizando localhost:3001');
     return 'http://localhost:3001';
   }
 
-  // 3️⃣ Se nenhuma das acima, tenta URL padrão de produção
-  console.warn('⚠️ Nenhuma configuração de API encontrada, usando fallback');
+  // 2️⃣ Se não for local, usa a variável de ambiente (Produção)
+  if (import.meta.env.VITE_API_URL) {
+    console.log('🌐 Usando API URL de Produção:', import.meta.env.VITE_API_URL);
+    return import.meta.env.VITE_API_URL;
+  }
+
   return 'http://localhost:3001';
 };
 

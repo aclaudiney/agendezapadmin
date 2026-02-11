@@ -261,6 +261,30 @@ const extrairData = (
     }
   }
 
+  // Dias da semana (ex: sexta, na sexta, proxima segunda)
+  const diasSemana: Record<string, number> = {
+    'domingo': 0, 'segunda': 1, 'terca': 2, 'terça': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5, 'sabado': 6, 'sábado': 6
+  };
+
+  for (const [nome, diaIndex] of Object.entries(diasSemana)) {
+    if (msgLower.includes(nome)) {
+      const dataAlvo = new Date(hoje.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      const diaAtual = dataAlvo.getDay();
+      let diff = diaIndex - diaAtual;
+      
+      // Se o dia já passou ou é hoje, assume a próxima semana
+      if (diff <= 0) diff += 7;
+      
+      dataAlvo.setDate(dataAlvo.getDate() + diff);
+      const ano = dataAlvo.getFullYear();
+      const mes = String(dataAlvo.getMonth() + 1).padStart(2, '0');
+      const dia = String(dataAlvo.getDate()).padStart(2, '0');
+      
+      console.log(`   ✅ Data extraída por dia da semana (${nome}): ${ano}-${mes}-${dia}`);
+      return `${ano}-${mes}-${dia}`;
+    }
+  }
+
   return null;
 };
 
@@ -343,18 +367,19 @@ const extrairProfissional = (
 // ============================================
 
 const extrairNome = (mensagem: string): string | null => {
-  // Padrões que indicam nome completo
+  // Padrões que indicam nome completo ou apresentação
   const patterns = [
-    /(?:me chamo|sou|meu nome é|nome:?)\s+([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)+)/i,
-    /^([A-ZÀ-Ÿ][a-zà-ÿ]+\s+[A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)*)$/
+    /(?:meu nome é|sou o|sou a|me chamo|aqui é o|aqui é a|falando aqui é o|falando aqui é a)\s+([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)*)/i,
+    /^([A-ZÀ-Ÿ][a-zà-ÿ]+)\s+(?:falando|aqui|da silva|dos santos)/i,
+    /(?:nome:?)\s+([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+)+)/i
   ];
 
   for (const pattern of patterns) {
     const match = mensagem.match(pattern);
     if (match && match[1]) {
       const nome = match[1].trim();
-      // Verificar se tem pelo menos nome e sobrenome
-      if (nome.split(' ').length >= 2) {
+      // Se for apenas uma palavra, validar se parece nome
+      if (nome.split(' ').length >= 1) {
         return nome;
       }
     }

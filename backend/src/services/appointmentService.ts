@@ -51,6 +51,17 @@ export const criarAgendamento = async (
 
     if (error || !data) {
       console.error('❌ Erro Supabase:', error);
+      
+      // Tratamento específico para erro de concorrência (UNIQUE constraint 23505)
+      if (error?.code === '23505') {
+        const proximos = await buscarHorariosLivresPorProfissional(companyId, dados.profissional_id, dados.data_agendamento);
+        return {
+          status: 'erro',
+          mensagem: 'HORARIO_OCUPADO_AGORA',
+          proximosHorarios: proximos.horarios.slice(0, 3)
+        };
+      }
+
       return {
         status: 'erro',
         mensagem: 'Erro ao criar agendamento no banco'

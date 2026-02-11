@@ -29,38 +29,11 @@ function AdminSidebar({ activePage, onNavigate, onLogout }: AdminSidebarProps) {
       description: 'Visão geral'
     },
     {
-      id: 'empresas',
-      label: 'Empresas',
-      icon: Building2,
-      description: 'Gerenciar empresas'
-    },
-    {
       id: 'crm',
       label: 'CRM',
       icon: MessageSquare,
       description: 'Conversas WhatsApp',
       badge: 'NOVO'
-    },
-    {
-      id: 'analytics',
-      label: 'Analytics',
-      icon: BarChart3,
-      description: 'Estatísticas gerais',
-      disabled: true
-    },
-    {
-      id: 'usuarios',
-      label: 'Usuários',
-      icon: Users,
-      description: 'Gerenciar usuários',
-      disabled: true
-    },
-    {
-      id: 'configuracoes',
-      label: 'Configurações',
-      icon: Settings,
-      description: 'Sistema',
-      disabled: true
     }
   ];
 

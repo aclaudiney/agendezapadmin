@@ -107,10 +107,17 @@ export const gerarRespostaIA = async (dados: any) => {
         console.log(`\n[IA] Gerando resposta - Tipo: ${dados.tipoConversa || 'agendar'}`);
         console.log(`   Histórico carregado: ${historico.length} mensagens`);
 
-        // ✅ CORREÇÃO (Fluxo 4): Limitar histórico para evitar confusão com datas antigas
-        if (historico.length > 15) {
-            console.log(`   ✂️ Limitando histórico (Last 15 messages)`);
-            historico = historico.slice(-15);
+        // Aumentar histórico para 20 mensagens
+        if (historico.length > 20) {
+            console.log(`   ✂️ Limitando histórico (Last 20 messages)`);
+            historico = historico.slice(-20);
+        }
+
+        // 💾 SALVAR MENSAGEM DO CLIENTE IMEDIATAMENTE (Se não for repetida)
+        if (dados.mensagem) {
+            await salvarMensagemBanco(dados.companyId, dados.jid, 'user', dados.mensagem);
+            // Adicionar ao histórico local para o prompt atual
+            historico.push({ role: 'user', parts: [{ text: dados.mensagem }] });
         }
 
         const dadosExtraidos = dados.dadosExtraidos || {};
@@ -447,98 +454,41 @@ Cliente disse "sim"/"ok"/"confirma"
                     instrucoesPorTipo = `
 📋 FLUXO: AGENDAR (Cliente Novo)
 
-⚠️ REGRA DE OURO: Só peça o NOME quando for CONFIRMAR o agendamento!
-   NÃO peça nome no início da conversa!
-
 1️⃣ SAUDAÇÃO INICIAL:
    ${dadosExtraidos.servico || dadosExtraidos.data ?
-                            `⚠️ Cliente JÁ DISSE o que quer!\n   ✅ Comece SEMPRE com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Claro, te ajudo sim!"\n   ✅ Vá DIRETO para o próximo passo!` :
-                            `✅ Se mensagem é saudação simples ("oi", "olá"): "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"\n   ✅ Se mensagem já menciona agendamento: comece com a saudação de apresentação e vá para o próximo passo\n   ❌ NÃO peça nome ainda!`}
+                            `⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ✅ Comece com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Com certeza posso te ajudar com isso!"\n   ✅ Depois, prossiga para o próximo passo!` :
+                            `✅ Se primeira mensagem: "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"`}
 
-2️⃣ COLETAR SERVIÇO:
-   ${dadosExtraidos.servico ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Qual serviço?"'}
-
-3️⃣ COLETAR DATA:
-   ${dadosExtraidos.data ? '✅ JÁ TEM - pule' : '❌ Pergunte: "Para qual dia?"'}
-
-4️⃣ COLETAR HORÁRIO (FLUXO CORRETO): 
-   ETAPA A - Verificar período: 
-   ${dadosExtraidos.periodo ? 
-   '✅ Período definido - pule para ETAPA B' : 
-   `❌ Pergunte: "Prefere manhã, tarde ou noite?" 
-   REGRA ESPERTA: 
+2️⃣ ORDEM DE COLETA (OBRIGATÓRIA):
+   Siga EXATAMENTE esta ordem. Não pule etapas nem peça dados adiantados.
    
-   Se já passou meio-dia → sugira apenas "tarde ou noite?" 
-   Se já passou 18h → sugira apenas "noite?" 
-   Se for de manhã → "manhã, tarde ou noite?"`} 
+   1. SERVIÇO: ${dadosExtraidos.servico ? '✅ Já temos' : '❌ Peça: "Qual serviço você deseja realizar?"'}
+   2. PROFISSIONAL: ${dados.eSolo ? '✅ Só tem 1 profissional (Solo)' : (dadosExtraidos.profissional ? '✅ Já temos' : '❌ Peça: "Com qual profissional deseja agendar? Temos: ' + dados.profissionaisLista + '"')}
+   3. DATA: ${dadosExtraidos.data ? '✅ Já temos' : '❌ Peça: "Para qual dia?"'}
+   4. PERÍODO: ${dadosExtraidos.periodo ? '✅ Já temos' : (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 10 ? '❌ Peça: "Prefere manhã, tarde ou noite?"' : '✅ Poucos horários, pode listar direto')}
+   5. HORÁRIO: ${dadosExtraidos.hora ? '✅ Já temos' : '❌ Liste os horários disponíveis e peça para escolher um.'}
+   6. NOME: ${dadosExtraidos.nome ? '✅ Já temos' : '❌ Peça: "Por último, qual o seu nome?"'}
+
+⚠️ REGRAS CRÍTICAS:
+- OBRIGAR PERGUNTA DE PERÍODO: Se houver mais de 10 horários disponíveis para o dia, você DEVE perguntar o período (manhã, tarde ou noite) antes de listar os horários.
+- CONFIRMAR DATAS AMBÍGUAS: Se o cliente disser apenas o dia da semana (ex: "sexta"), confirme a data completa no formato DD/MM. Ex: "Para esta sexta-feira, dia 15/05, certo?"
+- NÃO RE-PERGUNTAR NOME: Verifique no histórico se o cliente já se apresentou (ex: "Oi, sou o Carlos"). Se o nome já foi extraído ou mencionado, NÃO peça novamente no final do fluxo.
+
+3️⃣ CONFIRMAR (APENAS SE TUDO VÁLIDO):
+   ⚠️ ATENÇÃO CRÍTICA: Só peça confirmação se:
+   - Tem serviço ✅
+   - Tem profissional ✅
+   - Tem data ✅
+   - Tem período/hora VÁLIDA E DISPONÍVEL ✅
+   - Tem nome ✅
    
-   ETAPA B - Mostrar horários do período: 
-   ${dadosExtraidos.periodo && dadosExtraidos.horariosDisponiveis?.length > 0 ? 
-   `✅ Liste TODOS os horários do período ${dadosExtraidos.periodo}   Formato: "Para a ${dadosExtraidos.periodo} tenho: ${dadosExtraidos.horariosDisponiveis.join(', ')}. Qual prefere?"` : 
-   '❌ Ainda não tem período escolhido'} 
-   
-   ETAPA C - Cliente escolhe hora específica: 
-   ${dadosExtraidos.hora ? 
-   (validacoes.horarioValido ? 
-   '✅ Válido - próximo passo' : 
-   '🚫 Inválido - sugira próximos disponíveis') : 
-   '⏳ Aguardando cliente escolher'} 
-   
-   ⚠️ IMPORTANTE: 
-   SEMPRE pergunte período ANTES de listar horários 
-   NUNCA liste horários sem saber o período 
-   Horários devem ser SUBSEQUENTES (futuros, não passados)
+   ✅ Se TUDO válido:
+   - Faça resumo: "Perfeito! Confirmando:\n- [SERVICO]\n- [DD/MM/YYYY] às [HORA]\n- Com [PROF]\n- Cliente: [NOME]\n\nPosso confirmar?"
+   - Aguarde "sim" ou similar.
 
-5️⃣ COLETAR PROFISSIONAL (se múltiplos):
-   ${dados.eSolo ? '⚠️ Só tem 1 - pule' : '❌ Liste todos disponíveis'}
-
-6️⃣ PEDIR NOME (ANTES DE CONFIRMAR - ✅ NOVO!):
-   ${dadosExtraidos.nome ?
-                            '✅ JÁ TEM nome - pode confirmar' :
-                            '❌ AGORA SIM! Tem todos os dados do agendamento.\n   Mostre resumo e pergunte: "Qual seu nome completo pra eu confirmar?"'}
-
-7️⃣ CONFIRMAR (DEPOIS DE TER O NOME):
-   - Quando cliente informar o nome
-   - Faça resumo completo:
-     "Perfeito [NOME]! Confirmando:
-      - [SERVICO]
-      - [DATA] às [HORA]
-      - Com [PROF]
-      
-      Posso confirmar?"
-   
-8️⃣ FINALIZAR:
-   - Quando cliente confirmar: use 'confirmar_agendamento' COM nomeCliente
-   - NÃO faça confirmação só em texto!
-
-📝 EXEMPLO DE CONVERSA CORRETA:
-Cliente: "oi"
-Você: "Oi! Bem-vindo! Como posso ajudar?"
-
-Cliente: "quero cortar cabelo"
-Você: "Beleza! Para qual dia?"
-
-Cliente: "amanhã às 14h"
-Você: [valida horário] "Com qual profissional? Temos João e Maria"
-
-Cliente: "com o João"
-Você: "Perfeito! Qual seu nome completo pra eu confirmar?"
-
-Cliente: "Pedro Silva"
-Você: "Ótimo Pedro! Confirmando:
-       - Corte de cabelo
-       - 03/02/2026 às 14:00
-       - Com João
-       
-       Posso confirmar?"
-
-Cliente: "sim"
-Você: [usa confirmar_agendamento com nomeCliente="Pedro Silva"]
-
-❌ NUNCA FAÇA ISSO:
-- "Oi! Qual seu nome completo?" (logo de cara)
-- "Quer agendar? Qual seu nome?" (antes de coletar dados)
-- Pedir nome antes de ter serviço, data e hora`;
+4️⃣ FINALIZAR:
+   - Quando cliente confirmar: use a ferramenta 'confirmar_agendamento'.
+   - NÃO faça confirmação só em texto!`;
                     break;
 
                 case 'consultar':
@@ -770,7 +720,11 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
 
         console.log(`   Resposta recebida do Gemini`);
 
-        const part = response.data.candidates[0].content.parts[0];
+        const geminiData = response.data as any;
+        const part = geminiData?.candidates?.[0]?.content?.parts?.[0];
+        if (!part) {
+            return "Ops, não consegui gerar uma resposta agora. Pode tentar novamente?";
+        }
 
         if (part.functionCall) {
             console.log(`   Function call detectado: ${part.functionCall.name}`);
@@ -784,10 +738,11 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
             const msgFinal = resultado.mensagem.trim();
 
             // 3️⃣ SALVAR RESPOSTA DO MODELO (FUNCTION CALL)
-            await salvarMensagemBanco(dados.companyId, dados.jid, "model", msgFinal);
+            await salvarMensagemBanco(dados.companyId, dados.jid, "assistant", msgFinal);
 
+            if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
             chatsMemoria[memKey].push({
-                role: "model",
+                role: "assistant",
                 parts: [{ text: msgFinal }]
             });
 
@@ -797,10 +752,11 @@ ${dados.promptBase || 'Seja prestativo e cordial.'}
         const textoIA = (part.text || "Como posso ajudar?").trim();
 
         // 3️⃣ SALVAR RESPOSTA DO MODELO (TEXTO)
-        await salvarMensagemBanco(dados.companyId, dados.jid, "model", textoIA);
+        await salvarMensagemBanco(dados.companyId, dados.jid, "assistant", textoIA);
 
+        if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
         chatsMemoria[memKey].push({
-            role: "model",
+            role: "assistant",
             parts: [{ text: textoIA }]
         });
 
