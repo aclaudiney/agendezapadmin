@@ -7,9 +7,9 @@
 // 1️⃣ STATUS DO AGENDAMENTO
 // ============================================
 
-export type StatusAgendamento = 
-  | 'confirmado' 
-  | 'pendente' 
+export type StatusAgendamento =
+  | 'confirmado'
+  | 'pendente'
   | 'cancelado';
 
 // ============================================
@@ -80,6 +80,7 @@ export interface RespostaAgendamento {
   mensagem: string;
   agendamento?: Agendamento;
   horarios_sugeridos?: ValidacaoHorario[];
+  proximosHorarios?: string[];
   dados?: any;
 }
 

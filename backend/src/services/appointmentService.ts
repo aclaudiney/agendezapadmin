@@ -51,12 +51,12 @@ export const criarAgendamento = async (
 
     if (error || !data) {
       console.error('❌ Erro Supabase:', error);
-      
+
       // Tratamento específico para erro de concorrência (UNIQUE constraint 23505)
       if (error?.code === '23505') {
         const proximos = await buscarHorariosLivresPorProfissional(companyId, dados.profissional_id, dados.data_agendamento);
         return {
-          status: 'erro',
+          status: 'ocupado',
           mensagem: 'HORARIO_OCUPADO_AGORA',
           proximosHorarios: proximos.horarios.slice(0, 3)
         };
@@ -333,18 +333,18 @@ export const buscarHorariosDisponiveis = async (
 
     const dataObjCheck = new Date(`${data}T12:00:00-03:00`);
     const diaSemanaCheck = dataObjCheck.getDay();
-    const dias = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'];
+    const dias = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
     const nomeDia = dias[diaSemanaCheck];
 
     console.log(`🔍 Validando dia ${nomeDia} (${data})...`);
 
     if (settings?.dias_abertura && settings.dias_abertura[nomeDia] === false) {
-         console.log(`🚫 BLOQUEADO: Empresa fechada às ${nomeDia}s (dias_abertura=false)`);
-         return { 
-             horarios: [], 
-             status: 'fechado', 
-             motivo: `Estamos fechados às ${nomeDia}s.` 
-         };
+      console.log(`🚫 BLOQUEADO: Empresa fechada às ${nomeDia}s (dias_abertura=false)`);
+      return {
+        horarios: [],
+        status: 'fechado',
+        motivo: `Estamos fechados às ${nomeDia}s.`
+      };
     }
 
     // 2️⃣ BUSCAR CONFIGURAÇÃO DE HORÁRIOS (configuracoes)
@@ -359,11 +359,11 @@ export const buscarHorariosDisponiveis = async (
 
     // Compatibilidade com lógica antiga
     if (config.dias_abertura && config.dias_abertura[nomeDia] === false) {
-         return { 
-             horarios: [], 
-             status: 'fechado', 
-             motivo: `Estamos fechados às ${nomeDia}s.` 
-         };
+      return {
+        horarios: [],
+        status: 'fechado',
+        motivo: `Estamos fechados às ${nomeDia}s.`
+      };
     }
 
     // ✅ CORRIGIDO: Pegar dia da semana COM TIMEZONE
@@ -373,11 +373,11 @@ export const buscarHorariosDisponiveis = async (
     const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
 
     if (horarioDoDia === 'FECHADO' || !horarioDoDia) {
-        return { 
-            horarios: [], 
-            status: 'fechado', 
-            motivo: `Estamos fechados às ${nomeDia}s.` 
-        };
+      return {
+        horarios: [],
+        status: 'fechado',
+        motivo: `Estamos fechados às ${nomeDia}s.`
+      };
     }
 
     const { data: ocupados } = await supabase
@@ -440,20 +440,20 @@ export const buscarHorariosDisponiveis = async (
     const agora = new Date();
     // Ajuste simples para data local YYYY-MM-DD
     const hoje = agora.toISOString().split('T')[0];
-    
+
     let horariosFinais = horarios;
 
     if (data === hoje) {
-         const horaAtual = agora.getHours();
-         const minutoAtual = agora.getMinutes();
-         const horarioMinimo = horaAtual + 1; // 1h antecedência
-         
-         horariosFinais = horarios.filter(horario => {
-             const [h, m] = horario.split(':').map(Number);
-             return h > horarioMinimo || (h === horarioMinimo && m > minutoAtual);
-         });
-         
-         console.log(`⏰ Filtrado para hoje: ${horariosFinais.length} horários futuros (de ${horarios.length})`);
+      const horaAtual = agora.getHours();
+      const minutoAtual = agora.getMinutes();
+      const horarioMinimo = horaAtual + 1; // 1h antecedência
+
+      horariosFinais = horarios.filter(horario => {
+        const [h, m] = horario.split(':').map(Number);
+        return h > horarioMinimo || (h === horarioMinimo && m > minutoAtual);
+      });
+
+      console.log(`⏰ Filtrado para hoje: ${horariosFinais.length} horários futuros (de ${horarios.length})`);
     }
 
     return { horarios: horariosFinais, status: 'aberto' };
@@ -488,12 +488,12 @@ export const buscarHorariosLivresPorProfissional = async (
     const resultado = await buscarHorariosDisponiveis(companyId, profissionalId, data, duracao);
 
     if (resultado.status === 'fechado') {
-        return {
-            horarios: [],
-            periodos: { manha: [], tarde: [], noite: [] },
-            status: 'fechado',
-            motivo: resultado.motivo
-        };
+      return {
+        horarios: [],
+        periodos: { manha: [], tarde: [], noite: [] },
+        status: 'fechado',
+        motivo: resultado.motivo
+      };
     }
 
     const todosHorarios = resultado.horarios;
@@ -510,7 +510,7 @@ export const buscarHorariosLivresPorProfissional = async (
 
       // ✅ CORRIGIDO: Filtrar com 1h de antecedência (lead time)
       // Se agora é 16:00, só mostra horários a partir das 17:00
-      const dataHoraLimite = new Date(agora.getTime() + 60 * 60 * 1000); 
+      const dataHoraLimite = new Date(agora.getTime() + 60 * 60 * 1000);
 
       return dataHora > dataHoraLimite;
     });
@@ -671,10 +671,10 @@ export const validarHorarioDisponivel = async (
     );
 
     if (resultado.status === 'fechado') {
-        return {
-            disponivel: false,
-            motivo: resultado.motivo || 'Estabelecimento fechado'
-        };
+      return {
+        disponivel: false,
+        motivo: resultado.motivo || 'Estabelecimento fechado'
+      };
     }
 
     const horariosDisponiveis = resultado.horarios;
