@@ -215,14 +215,15 @@ async function handleIncomingMessage(companyId: string, data: any) {
                 const isRedisConnected = (messageQueue.client as any)?.status === 'ready';
 
                 if (isRedisConnected) {
+                    console.log(`📦 [${companyId}] Enviando para fila (Redis): ${phone}`);
                     await addMessageToQueue(companyId, phone!, messageText, msg);
                 } else {
-                    console.log(`⚠️ [Queue] Redis Offline - Processando mensagem diretamente...`);
+                    console.log(`⚠️ [${companyId}] Redis Offline - Processando mensagem diretamente: ${phone}`);
                     // Não aguardar (fire and forget) para não travar o webhook
                     processMessage({ companyId, phone, message: messageText, messageData: msg });
                 }
             } catch (err) {
-                console.warn(`⚠️ [Queue] Erro ao adicionar na fila, processando direto...`);
+                console.warn(`⚠️ [${companyId}] Erro ao adicionar na fila, processando direto: ${phone}`);
                 processMessage({ companyId, phone, message: messageText, messageData: msg });
             }
         }

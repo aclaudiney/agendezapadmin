@@ -392,15 +392,26 @@ export const db = {
 
     async getConfiguracao(companyId: string) {
         try {
+            // Tenta buscar em 'company_settings' primeiro (tabela nova/unificada)
+            const { data: settings, error: settingsError } = await supabase
+                .from('company_settings')
+                .select('*')
+                .eq('company_id', companyId)
+                .maybeSingle();
+
+            if (settings) {
+                return settings;
+            }
+
+            // Fallback para 'configuracoes' (tabela legada)
             const { data, error } = await supabase
                 .from('configuracoes')
                 .select('*')
-                .eq('company_id', companyId) // ✅ MULTI-TENANT
-                .single();
+                .eq('company_id', companyId)
+                .maybeSingle();
 
-            if (error) {
+            if (error && error.code !== 'PGRST116') {
                 console.error("❌ Erro getConfiguracao:", error.message);
-                return null;
             }
 
             return data;

@@ -141,6 +141,13 @@ export const gerarRespostaIA = async (dados: any) => {
                 dadosExtraidos.horariosPorPeriodo = {};
                 dadosExtraidos.erro_fluxo = "DIA_FECHADO"; // Garante que a instrucaoPrioritaria seja ativada
             }
+        } else if (!dadosExtraidos.data && !validacoes.diaAbertoCalculado) {
+            // Se não tem data, vamos buscar as configurações para mostrar horários de funcionamento
+            const { db } = await import('./supabase.js');
+            const config = await db.getConfiguracao(dados.companyId);
+            if (config) {
+                dadosExtraidos.configuracoes = config;
+            }
         }
         // --- FIM DA VALIDAÇÃO INICIAL DE DIA ABERTO ---
 

@@ -19,28 +19,12 @@ export const validarDiaAberto = async (
   hora?: string // HH:MM (opcional)
 ): Promise<{ aberto: boolean; motivo?: string }> => {
   try {
-    // Buscar configuração (prioriza 'configuracoes', fallback para 'company_settings')
-    let config: any = null;
-
-    const { data: cfgPrim, error: errPrim } = await supabase
-      .from('configuracoes')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
-
-    if (cfgPrim) {
-      config = cfgPrim;
-    } else {
-      const { data: cfgAlt } = await supabase
-        .from('company_settings')
-        .select('*')
-        .eq('company_id', companyId)
-        .single();
-      config = cfgAlt || null;
-    }
+    // Buscar configuração centralizada pelo db helper (já faz fallback settings -> configuracoes)
+    const { db } = await import('../supabase.js');
+    const config = await db.getConfiguracao(companyId);
 
     if (!config) {
-      // Se não encontrar config, não bloqueia por padrão; responde sem fechar
+      console.log(`   ⚠️ Configuração não encontrada para empresa ${companyId}. Permitindo por padrão.`);
       return { aberto: true, motivo: 'Configuração não encontrada (permitido por padrão)' };
     }
 
@@ -157,11 +141,8 @@ export const validarHorarioDisponivel = async (
 ): Promise<{ disponivel: boolean; motivo?: string }> => {
   try {
     // ✅ PRIMEIRO: Validar se tá dentro do horário de funcionamento
-    const { data: config } = await supabase
-      .from('company_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
+    const { db } = await import('../supabase.js');
+    const config = await db.getConfiguracao(companyId);
 
     if (!config) {
       return { disponivel: false, motivo: 'Configuração não encontrada' };
