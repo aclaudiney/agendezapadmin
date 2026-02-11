@@ -107,6 +107,20 @@ export const gerarRespostaIA = async (dados: any) => {
         console.log(`\n[IA] Gerando resposta - Tipo: ${dados.tipoConversa || 'agendar'}`);
         console.log(`   Histórico carregado: ${historico.length} mensagens`);
 
+        // ✅ CORREÇÃO (Fluxo 5): Datas Dinâmicas (Ajustado para America/Sao_Paulo)
+        const agoraServidor = new Date();
+        const formatterLong = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' });
+        const formatterShort = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' });
+        
+        const hojeLocal = new Date(agoraServidor.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+        const amanhaLocal = new Date(hojeLocal);
+        amanhaLocal.setDate(hojeLocal.getDate() + 1);
+        
+        const diaSemanaHoje = formatterLong.format(hojeLocal);
+        const dataHojeStr = formatterShort.format(hojeLocal);
+        const diaSemanaAmanha = formatterLong.format(amanhaLocal);
+        const dataAmanhaStr = formatterShort.format(amanhaLocal);
+
         // Aumentar histórico para 20 mensagens
         if (historico.length > 20) {
             console.log(`   ✂️ Limitando histórico (Last 20 messages)`);
@@ -124,6 +138,15 @@ export const gerarRespostaIA = async (dados: any) => {
         let validacoes = dadosExtraidos.validacoes || {}; // Usar 'let' para poder reatribuir
 
         // --- VALIDAÇÃO INICIAL DE DIA ABERTO (CRÍTICO) ---
+        // Sempre carregar configurações da empresa para ter os horários de funcionamento
+        if (!dadosExtraidos.configuracoes) {
+            const { db } = await import('./supabase.js');
+            const config = await db.getConfiguracao(dados.companyId);
+            if (config) {
+                dadosExtraidos.configuracoes = config;
+            }
+        }
+
         if (dadosExtraidos.data && !validacoes.diaAbertoCalculado) { // Adiciona flag para não recalcular
             const resultadoDiaAberto = await validarDiaAberto(dados.companyId, dadosExtraidos.data);
 
@@ -140,13 +163,6 @@ export const gerarRespostaIA = async (dados: any) => {
                 dadosExtraidos.periodosDisponiveis = [];
                 dadosExtraidos.horariosPorPeriodo = {};
                 dadosExtraidos.erro_fluxo = "DIA_FECHADO"; // Garante que a instrucaoPrioritaria seja ativada
-            }
-        } else if (!dadosExtraidos.data && !validacoes.diaAbertoCalculado) {
-            // Se não tem data, vamos buscar as configurações para mostrar horários de funcionamento
-            const { db } = await import('./supabase.js');
-            const config = await db.getConfiguracao(dados.companyId);
-            if (config) {
-                dadosExtraidos.configuracoes = config;
             }
         }
         // --- FIM DA VALIDAÇÃO INICIAL DE DIA ABERTO ---
@@ -189,6 +205,18 @@ export const gerarRespostaIA = async (dados: any) => {
             horariosFuncionamento += `2. Se o dia constar como FECHADO, diga explicitamente que não abrimos nesse dia.\n`;
             horariosFuncionamento += `3. Se o cliente perguntar "que horas vocês abrem amanhã", verifique qual dia da semana é amanhã na lista acima e responda o horário EXATO.\n`;
             horariosFuncionamento += `4. JAMAIS invente horários genéricos como "08:00 às 18:00" se a lista acima disser algo diferente.\n`;
+            
+            // ✅ Adição: Mapeamento explícito de HOJE para facilitar a vida da IA
+            const diasSemanaMap: Record<string, string> = {
+                'segunda-feira': 'segunda', 'terça-feira': 'terca', 'quarta-feira': 'quarta', 
+                'quinta-feira': 'quinta', 'sexta-feira': 'sexta', 'sábado': 'sabado', 'domingo': 'domingo'
+            };
+            const hojeSlug = diasSemanaMap[diaSemanaHoje.toLowerCase()] || '';
+            if (hojeSlug) {
+                const horarioHoje = config[`horario_${hojeSlug}`];
+                const abertoHoje = config.dias_abertura?.[hojeSlug] !== false;
+                horariosFuncionamento += `\n📌 HOJE (${diaSemanaHoje}): ${abertoHoje && horarioHoje && horarioHoje !== 'FECHADO' ? horarioHoje : 'FECHADO'}\n`;
+            }
         } else {
             horariosFuncionamento += `Horários não configurados. Por favor, consulte o estabelecimento.\n`;
         }
@@ -552,20 +580,6 @@ Cliente disse "sim"/"ok"/"confirma"
         if (validacoes.diaAberto === false) {
             instrucoesPorTipo += `\n\n⚠️ REGRA CRÍTICA: Se validacoes.diaAberto === false → JAMAIS mostre horários! Responda: "Estamos fechados nesse dia. Pode ser outro dia?"`;
         }
-
-        // ✅ CORREÇÃO (Fluxo 5): Datas Dinâmicas (Ajustado para America/Sao_Paulo)
-        const agoraServidor = new Date();
-        const formatterLong = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' });
-        const formatterShort = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' });
-        
-        const hojeLocal = new Date(agoraServidor.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
-        const amanhaLocal = new Date(hojeLocal);
-        amanhaLocal.setDate(hojeLocal.getDate() + 1);
-        
-        const diaSemanaHoje = formatterLong.format(hojeLocal);
-        const dataHojeStr = formatterShort.format(hojeLocal);
-        const diaSemanaAmanha = formatterLong.format(amanhaLocal);
-        const dataAmanhaStr = formatterShort.format(amanhaLocal);
 
         // ✅ CORREÇÃO (Fluxo 1): Instrução Prioritária de Bloqueio
         let instrucaoPrioritaria = "";
