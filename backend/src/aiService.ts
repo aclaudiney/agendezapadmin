@@ -152,11 +152,46 @@ export const gerarRespostaIA = async (dados: any) => {
             ? dados.servicos.map((s: any) => `- ${s}`).join('\n')
             : 'Servicos nao especificados';
 
+        // ✅ HORÁRIOS DE FUNCIONAMENTO (DINÂMICO PARA MULTITENANCY)
+        let horariosFuncionamento = `\n🕒 HORÁRIOS DE ATENDIMENTO (${dados.nomeLoja}):\n`;
+        
+        if (dadosExtraidos.configuracoes) {
+            const config = dadosExtraidos.configuracoes;
+            const nomesDias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+            const camposDias = ['horario_segunda', 'horario_terca', 'horario_quarta', 'horario_quinta', 'horario_sexta', 'horario_sabado', 'horario_domingo'];
+            const diasAbertura = config.dias_abertura || {};
+
+            camposDias.forEach((campo, index) => {
+                const diaNome = nomesDias[index];
+                const diaSlug = campo.replace('horario_', '');
+                
+                // Se o JSON dias_abertura diz que tá fechado, ou o campo de texto é FECHADO/vazio
+                const fechadoPeloJson = diasAbertura[diaSlug] === false;
+                const horarioTexto = config[campo];
+                const fechadoPeloTexto = !horarioTexto || horarioTexto === 'FECHADO' || horarioTexto.trim() === '';
+
+                if (fechadoPeloJson || fechadoPeloTexto) {
+                    horariosFuncionamento += `- ${diaNome}: FECHADO\n`;
+                } else {
+                    horariosFuncionamento += `- ${diaNome}: ${horarioTexto}\n`;
+                }
+            });
+
+            horariosFuncionamento += `\n⚠️ IMPORTANTE: Use ESTES horários acima para informar ao cliente. Se o dia constar como FECHADO, diga que não atendemos nesse dia.\n`;
+        } else {
+            horariosFuncionamento += `Horários não configurados. Por favor, consulte o estabelecimento.\n`;
+        }
+
         // ✅ ETAPA 1: CORRIGIDO - Mostra horários e períodos disponíveis!
         let resumoDadosExtraidos = '';
         if (dadosExtraidos.servico || dadosExtraidos.data || dadosExtraidos.hora) {
             resumoDadosExtraidos = `\n📋 DADOS JA INFORMADOS PELO CLIENTE:\n`;
             if (dadosExtraidos.servico) resumoDadosExtraidos += `✅ Servico: ${dadosExtraidos.servico}\n`;
+
+            // Adicionar horários reais ao resumo para a IA ver
+            if (horariosFuncionamento) {
+                resumoDadosExtraidos += horariosFuncionamento;
+            }
 
             // ✅ ETAPA 1: Formata data corretamente
             if (dadosExtraidos.data) {

@@ -414,19 +414,29 @@ export class EvolutionAPI {
 
     /**
      * Download de mídia (áudio, imagem, etc)
+     * ✅ Atualizado para v2 (POST /message/downloadMedia)
      */
-    async downloadMedia(messageId: string, companyId: string): Promise<Buffer | null> {
+    async downloadMedia(messageKey: any, companyId: string): Promise<Buffer | null> {
         try {
+            const messageId = typeof messageKey === 'string' ? messageKey : messageKey.id;
             console.log(`📥 [Evolution] Baixando mídia da mensagem ${messageId}...`);
-            const response = await axios.get<ArrayBuffer>(
-                `${this.baseURL}/message/downloadMedia/${companyId}/${messageId}`,
+
+            // Em v2, o endpoint correto é POST /message/downloadMedia/{instance}
+            // O corpo deve conter a chave completa da mensagem
+            const response = await axios.post<ArrayBuffer>(
+                `${this.baseURL}/message/downloadMedia/${companyId}`,
+                {
+                    key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
+                },
                 { 
                     headers: this.getHeaders(),
                     responseType: 'arraybuffer' 
                 }
             );
+
             return Buffer.from(response.data as ArrayBuffer);
         } catch (error: any) {
+            // Se o erro for 404 no POST, talvez a versão seja diferente
             console.error(`❌ [Evolution] Erro no downloadMedia:`, error.response?.data || error.message);
             return null;
         }

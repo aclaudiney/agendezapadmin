@@ -135,7 +135,7 @@ async function handleIncomingMessage(companyId: string, data: any) {
             if (!messageText && msg.message?.audioMessage) {
                 console.log(`🎙️ [${companyId}] Áudio recebido de ${phone}. Transcrevendo...`);
                 try {
-                    const audioBuffer = await evolutionAPI.downloadMedia(msg.key.id, companyId);
+                    const audioBuffer = await evolutionAPI.downloadMedia(msg.key, companyId);
                     if (audioBuffer) {
                         const transcricao = await transcreverAudio(audioBuffer);
                         if (transcricao) {

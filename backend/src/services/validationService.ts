@@ -38,21 +38,7 @@ export const validarDiaAberto = async (
     const nomesDia = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
 
-    // Buscar horário específico do dia (horario_segunda, horario_terca, etc)
-    const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
-
-    console.log(`   🕐 Validando dia: ${nomesDia[diaSemana]} (${data})`);
-    console.log(`      Horário do dia: ${horarioDoDia}`);
-
-    // ✅ CRÍTICO: Se tá "FECHADO", retorna erro
-    if (horarioDoDia === 'FECHADO' || !horarioDoDia) {
-      return {
-        aberto: false,
-        motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
-      };
-    }
-
-    // ✅ CRÍTICO (NOVO): Verificar dias_abertura (JSON)
+    // ✅ PRIORIDADE 1: Verificar dias_abertura (JSON)
     if (config.dias_abertura) {
       const nomeDiaSemAcento = nomesDiaIngles[diaSemana]; // segunda, terca...
       if (config.dias_abertura[nomeDiaSemAcento] === false) {
@@ -61,6 +47,20 @@ export const validarDiaAberto = async (
            motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
          };
       }
+    }
+
+    // ✅ PRIORIDADE 2: Buscar horário específico do dia (horario_segunda, horario_terca, etc)
+    const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
+
+    console.log(`   🕐 Validando dia: ${nomesDia[diaSemana]} (${data})`);
+    console.log(`      Horário do dia: ${horarioDoDia}`);
+
+    // ✅ CRÍTICO: Se tá "FECHADO", retorna erro
+    if (horarioDoDia === 'FECHADO' || !horarioDoDia || horarioDoDia.trim() === '') {
+      return {
+        aberto: false,
+        motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
+      };
     }
 
     // ✅ VALIDAR SE HORÁRIO TÁ DENTRO DA ABERTURA (se informado)
@@ -157,6 +157,16 @@ export const validarHorarioDisponivel = async (
     const dataObj = new Date(`${data}T12:00:00-03:00`);
     const diaSemana = dataObj.getDay();
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+
+    // ✅ PRIORIDADE 1: Verificar dias_abertura (JSON)
+    if (config.dias_abertura) {
+      const nomeDiaSemAcento = nomesDiaIngles[diaSemana];
+      if (config.dias_abertura[nomeDiaSemAcento] === false) {
+         return { disponivel: false, motivo: 'Estabelecimento fechado nesse dia' };
+      }
+    }
+
+    // ✅ PRIORIDADE 2: Buscar horário do dia
     const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
 
     if (horarioDoDia === 'FECHADO' || !horarioDoDia) {
@@ -378,6 +388,14 @@ export const buscarHorariosDisponiveis = async (
     const dataObj = new Date(`${data}T12:00:00-03:00`);
     const diaSemana = dataObj.getDay();
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+
+    // ✅ PRIORIDADE 1: Verificar dias_abertura (JSON)
+    if (config.dias_abertura) {
+      const nomeDiaSemAcento = nomesDiaIngles[diaSemana];
+      if (config.dias_abertura[nomeDiaSemAcento] === false) return [];
+    }
+
+    // ✅ PRIORIDADE 2: Buscar horário do dia
     const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
 
     if (horarioDoDia === 'FECHADO' || !horarioDoDia) return [];
