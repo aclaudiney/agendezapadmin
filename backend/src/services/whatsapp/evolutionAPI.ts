@@ -477,6 +477,24 @@ export class EvolutionAPI {
                 console.log(`⚠️ [Evolution] Base64 fallback falhou para ${messageId}`);
             }
 
+            // 3b. TENTATIVA: Endpoint alternativo em algumas instalações
+            try {
+                const altBase64Response = await axios.post(
+                    `${this.baseURL}/chat/getBase64FromMediaMessage/${companyId}`,
+                    payloadMessage ? { message: payloadMessage } : { key: payloadKey },
+                    { headers: this.getHeaders() }
+                );
+
+                const base64DataAlt = (altBase64Response.data as any).base64 || (altBase64Response.data as any).response;
+                if (base64DataAlt) {
+                    console.log(`✅ [Evolution] Mídia obtida via Base64 (endpoint alternativo)`);
+                    const base64String = base64DataAlt.includes(',') ? base64DataAlt.split(',')[1] : base64DataAlt;
+                    return Buffer.from(base64String, 'base64');
+                }
+            } catch (base64AltError: any) {
+                console.log(`⚠️ [Evolution] Base64 (alternativo) falhou para ${messageId}`);
+            }
+
             throw new Error('Todas as tentativas de download de mídia falharam.');
 
         } catch (error: any) {

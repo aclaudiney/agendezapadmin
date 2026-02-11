@@ -235,8 +235,50 @@ async function handleIncomingMessage(companyId: string, data: any) {
  * Trata atualizações de mensagens (lida, deletada, etc)
  */
 async function handleMessageUpdate(companyId: string, data: any) {
-    // TODO: Implementar se necessário (ex: marcar como lido no CRM)
-    // console.log(`🔄 [${companyId}] Mensagem atualizada`);
+    try {
+        const messages = data.messages || [data];
+        for (const msg of messages) {
+            const fromMe = msg.key?.fromMe || false;
+            const clientJid = msg.key?.remoteJid || msg.remoteJid;
+            if (clientJid?.endsWith('@g.us')) continue;
+            const phone = clientJid?.replace('@s.whatsapp.net', '');
+
+            const temAudio = !!(msg.message?.audioMessage);
+            const temTexto =
+                !!(msg.message?.conversation ||
+                   msg.message?.extendedTextMessage?.text ||
+                   msg.message?.imageMessage?.caption);
+
+            if (temAudio && !temTexto) {
+                console.log(`🔄 [${companyId}] Update contém áudio de ${phone}. Tentando transcrever...`);
+                try {
+                    // Passa a MENSAGEM inteira para maior compatibilidade com Evolution
+                    const audioBuffer = await evolutionAPI.downloadMedia(msg, companyId);
+                    if (audioBuffer) {
+                        const transcricao = await transcreverAudio(audioBuffer);
+                        if (transcricao) {
+                            console.log(`✅ [${companyId}] Transcrição (update) para ${phone}: "${transcricao}"`);
+                            // Encaminhar para o mesmo fluxo de processamento
+                            await processMessage({
+                                companyId,
+                                phone,
+                                message: transcricao,
+                                messageData: msg
+                            }, 'update-audio');
+                        } else {
+                            console.log(`⚠️ [${companyId}] Transcrição (update) vazia para ${phone}`);
+                        }
+                    } else {
+                        console.log(`❌ [${companyId}] Buffer de áudio ausente (update) para ${phone}`);
+                    }
+                } catch (err) {
+                    console.error(`❌ [${companyId}] Erro transcrevendo áudio em update:`, (err as any)?.message || err);
+                }
+            }
+        }
+    } catch (error: any) {
+        console.error(`❌ Erro em handleMessageUpdate para ${companyId}:`, error.message);
+    }
 }
 
 export default router;
