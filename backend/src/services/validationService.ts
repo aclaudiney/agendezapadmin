@@ -19,15 +19,29 @@ export const validarDiaAberto = async (
   hora?: string // HH:MM (opcional)
 ): Promise<{ aberto: boolean; motivo?: string }> => {
   try {
-    // Buscar configuração
-    const { data: config, error } = await supabase
-      .from('company_settings')
+    // Buscar configuração (prioriza 'configuracoes', fallback para 'company_settings')
+    let config: any = null;
+
+    const { data: cfgPrim, error: errPrim } = await supabase
+      .from('configuracoes')
       .select('*')
       .eq('company_id', companyId)
       .single();
 
-    if (error || !config) {
-      return { aberto: false, motivo: 'Configuração não encontrada' };
+    if (cfgPrim) {
+      config = cfgPrim;
+    } else {
+      const { data: cfgAlt } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('company_id', companyId)
+        .single();
+      config = cfgAlt || null;
+    }
+
+    if (!config) {
+      // Se não encontrar config, não bloqueia por padrão; responde sem fechar
+      return { aberto: true, motivo: 'Configuração não encontrada (permitido por padrão)' };
     }
 
     // ✅ CORRIGIDO: Converter data YYYY-MM-DD para dia da semana COM TIMEZONE BRASIL
@@ -56,7 +70,7 @@ export const validarDiaAberto = async (
     console.log(`      Horário do dia: ${horarioDoDia}`);
 
     // ✅ CRÍTICO: Se tá "FECHADO", retorna erro
-    if (horarioDoDia === 'FECHADO' || !horarioDoDia || horarioDoDia.trim() === '') {
+    if (horarioDoDia === 'FECHADO' || !horarioDoDia || String(horarioDoDia).trim() === '') {
       return {
         aberto: false,
         motivo: `Desculpa, estamos fechados às ${nomesDia[diaSemana]}s.`
