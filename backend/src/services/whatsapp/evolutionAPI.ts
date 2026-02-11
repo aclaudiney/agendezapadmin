@@ -424,12 +424,14 @@ export class EvolutionAPI {
 
             // Garantir que a key esteja no formato esperado pela API { id, remoteJid, fromMe }
             const payloadKey = typeof messageKey === 'string' ? { id: messageKey } : messageKey;
+            // Em algumas versões, a API exige o objeto completo da mensagem (msg)
+            const payloadMessage = (messageKey && messageKey.message) ? messageKey : null;
 
             // 1. TENTATIVA: POST /message/downloadMedia (Padrão v2)
             try {
                 const response = await axios.post<ArrayBuffer>(
                     `${this.baseURL}/message/downloadMedia/${companyId}`,
-                    { key: payloadKey },
+                    payloadMessage ? { message: payloadMessage } : { key: payloadKey },
                     { 
                         headers: this.getHeaders(),
                         responseType: 'arraybuffer' 
@@ -456,13 +458,11 @@ export class EvolutionAPI {
                 console.log(`⚠️ [Evolution] GET legacy falhou para ${messageId}. Tentando Base64 fallback...`);
             }
 
-            // 3. TENTATIVA: POST /chat/getBase64FromMediaMessage (Fallback v2 alternativo)
+            // 3. TENTATIVA: POST /message/getBase64FromMediaMessage (Fallback v2 alternativo)
             try {
                 const base64Response = await axios.post(
-                    `${this.baseURL}/chat/getBase64FromMediaMessage/${companyId}`,
-                    {
-                        key: typeof messageKey === 'string' ? { id: messageKey } : messageKey
-                    },
+                    `${this.baseURL}/message/getBase64FromMediaMessage/${companyId}`,
+                    payloadMessage ? { message: payloadMessage } : { key: payloadKey },
                     { headers: this.getHeaders() }
                 );
 

@@ -135,7 +135,7 @@ async function handleIncomingMessage(companyId: string, data: any) {
             if (!messageText && msg.message?.audioMessage) {
                 console.log(`🎙️ [${companyId}] Áudio recebido de ${phone}. Transcrevendo...`);
                 try {
-                    // ✅ CRÍTICO: Na Evolution v2, a chave da mensagem pode estar em msg.key ou msg
+                    // ✅ CRÍTICO: Em algumas versões da Evolution, é necessário enviar a MENSAGEM inteira
                     const messageKey = msg.key || {
                         id: msg.id,
                         remoteJid: clientJid,
@@ -144,7 +144,8 @@ async function handleIncomingMessage(companyId: string, data: any) {
 
                     console.log(`🔍 [${companyId}] Debug Key:`, JSON.stringify(messageKey));
 
-                    const audioBuffer = await evolutionAPI.downloadMedia(messageKey, companyId);
+                    // ✅ Passar o objeto 'msg' completo para maior compatibilidade
+                    const audioBuffer = await evolutionAPI.downloadMedia(msg, companyId);
                     if (audioBuffer) {
                         const transcricao = await transcreverAudio(audioBuffer);
                         if (transcricao) {
