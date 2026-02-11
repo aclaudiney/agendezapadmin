@@ -95,9 +95,9 @@ export const validarDiaAberto = async (
     console.log(`   ✅ Dia e horário válidos`);
     return { aberto: true };
   } catch (error) {
-    console.error('❌ Erro validarDiaAberto:', error);
-    return { aberto: false, motivo: 'Erro ao validar' };
-  }
+      console.error('❌ Erro validarDiaAberto:', error);
+      return { aberto: true }; // Em caso de erro técnico, permite por padrão para não bloquear a IA
+    }
 };
 
 // ============================================

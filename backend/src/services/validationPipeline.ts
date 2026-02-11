@@ -178,7 +178,7 @@ export const validarEEnriquecerContexto = async (
   contexto: ConversationContext
 ): Promise<ResultadoValidacao> => {
   try {
-    console.log(`\n🔍 [VALIDATION] Validando dados extraídos...`);
+    console.log(`\n🔍 [VALIDATION] Validando dados extraídos... (Tipo: ${contexto.tipoConversa})`);
 
     const resultado: ResultadoValidacao = {
       ...dadosExtraidos,
@@ -193,7 +193,13 @@ export const validarEEnriquecerContexto = async (
       }
     };
 
-    // ✅ VALIDAÇÃO CRÍTICA 0: HORÁRIO NO PASSADO (ANTES DE TUDO!)
+    // ✅ VALIDAÇÃO 0: Se for CONSULTA, pula validações rigorosas e retorna tudo como true
+    if (contexto.tipoConversa === 'consultar') {
+      console.log(`   ℹ️ [VALIDATION] Tipo 'consultar' detectado. Pulando validações de agendamento.`);
+      return resultado;
+    }
+
+    // ✅ VALIDAÇÃO CRÍTICA 1: HORÁRIO NO PASSADO (ANTES DE TUDO!)
     if (dadosExtraidos.data && dadosExtraidos.hora) {
       console.log(`   ⏰ Verificando se horário já passou...`);
 

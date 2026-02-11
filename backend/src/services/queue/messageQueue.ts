@@ -41,7 +41,12 @@ export async function processMessage(data: any, jobId: string | number = 'direct
     const { companyId, phone, message: messageText, messageData: msg } = data;
     const jid = `${phone}@s.whatsapp.net`;
 
-    console.log(`⚙️ Processando mensagem [${jobId}]: ${companyId} - ${phone}`);
+    console.log(`\n---------------------------------------------------------`);
+    console.log(`📩 MENSAGEM RECEBIDA [${jobId}]:`);
+    console.log(`   Empresa: ${companyId}`);
+    console.log(`   Cliente: ${phone}`);
+    console.log(`   Texto: "${messageText}"`);
+    console.log(`---------------------------------------------------------\n`);
 
     try {
         // Importação dinâmica para evitar Dependência Circular se algum handler importar a fila
@@ -160,6 +165,13 @@ export async function processMessage(data: any, jobId: string | number = 'direct
 
         // 7️⃣ ENVIAR RESPOSTA
         if (respostaIA) {
+            console.log(`\n---------------------------------------------------------`);
+            console.log(`📤 RESPOSTA ENVIADA [${jobId}]:`);
+            console.log(`   Empresa: ${companyId}`);
+            console.log(`   Cliente: ${phone}`);
+            console.log(`   Texto: "${respostaIA.substring(0, 100)}${respostaIA.length > 100 ? '...' : ''}"`);
+            console.log(`---------------------------------------------------------\n`);
+
             await evolutionAPI.sendTextMessage(companyId, phone, respostaIA);
 
             await salvarMensagemWhatsApp({
