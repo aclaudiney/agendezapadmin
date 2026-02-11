@@ -483,14 +483,16 @@ export class EvolutionAPI {
             
             if (error.response?.data) {
                 const data = error.response.data;
-                if (data instanceof ArrayBuffer || Buffer.isBuffer(data)) {
+                if (data instanceof ArrayBuffer) {
                     try {
                         errorDetail = Buffer.from(data).toString();
                     } catch (e) {
                         errorDetail = `Erro binário (Status: ${error.response.status})`;
                     }
+                } else if (Buffer.isBuffer(data)) {
+                    errorDetail = data.toString();
                 } else {
-                    errorDetail = JSON.stringify(data);
+                    errorDetail = typeof data === 'object' ? JSON.stringify(data) : String(data);
                 }
             }
 
