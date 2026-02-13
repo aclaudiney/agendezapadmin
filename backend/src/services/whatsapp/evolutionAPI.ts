@@ -316,6 +316,15 @@ export class EvolutionAPI {
 
             console.log(`🚀 [Evolution] Enviando texto para ${cleanNumber} (empresa: ${companyId})`);
 
+            // Tenta obter o status da conexão antes de enviar
+            const status = await this.getConnectionStatus(companyId);
+            if (status.success && status.state !== 'open') {
+                console.warn(`⚠️ [Evolution] Instância ${companyId} não está aberta (status: ${status.state}). Tentando conectar...`);
+                await this.connectInstance(companyId);
+                // Pequena pausa para a conexão estabilizar
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
             const response = await axios.post(
                 `${this.baseURL}/message/sendText/${companyId}`,
                 {
@@ -334,10 +343,18 @@ export class EvolutionAPI {
             };
         } catch (error: any) {
             const errorData = error.response?.data;
+            
+            // Se o erro for "Connection Closed", tenta reconectar para a próxima vez
+            const errorMessage = errorData?.response?.message?.[0] || errorData?.message || error.message;
+            if (errorMessage?.includes('Connection Closed') || error.response?.status === 400) {
+                console.error(`❌ [Evolution] Conexão fechada para ${companyId}. Solicitando reconexão...`);
+                this.connectInstance(companyId).catch(err => console.error('Erro ao reconectar:', err));
+            }
+
             console.error(`❌ [Evolution] Erro ao enviar mensagem para ${number}:`, JSON.stringify(errorData || error.message, null, 2));
             return {
                 success: false,
-                error: errorData?.message || error.message
+                error: errorMessage
             };
         }
     }
