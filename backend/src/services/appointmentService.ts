@@ -6,6 +6,7 @@
  */
 
 import { db, supabase } from '../supabase.js';
+import { NotificationService } from './notificationService.js';
 import {
   Agendamento,
   CriarAgendamentoInput,
@@ -67,6 +68,11 @@ export const criarAgendamento = async (
         mensagem: 'Erro ao criar agendamento no banco'
       };
     }
+
+    // 🔔 NOTIFICAR PROFISSIONAL
+    NotificationService.notifyProfessionalNewAppointment(companyId, data.id).catch(err => 
+      console.error('⚠️ Erro em background ao notificar profissional:', err)
+    );
 
     return {
       status: 'sucesso',

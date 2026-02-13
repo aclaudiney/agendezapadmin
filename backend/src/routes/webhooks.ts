@@ -124,6 +124,7 @@ async function handleIncomingMessage(companyId: string, data: any) {
             if (clientJid?.endsWith('@g.us')) continue;
 
             const phone = clientJid?.replace('@s.whatsapp.net', '');
+            const pushName = msg.pushName || null;
             
             // ✅ EXTRAÇÃO DE TEXTO (TEXTO OU ÁUDIO)
             let messageText = msg.message?.conversation ||
@@ -216,11 +217,11 @@ async function handleIncomingMessage(companyId: string, data: any) {
 
                 if (isRedisConnected) {
                     console.log(`📦 [${companyId}] Enviando para fila (Redis): ${phone}`);
-                    await addMessageToQueue(companyId, phone!, messageText, msg);
+                    await addMessageToQueue(companyId, phone!, messageText, { ...msg, pushName });
                 } else {
                     console.log(`⚠️ [${companyId}] Redis Offline - Processando mensagem diretamente: ${phone}`);
                     // Não aguardar (fire and forget) para não travar o webhook
-                    processMessage({ companyId, phone, message: messageText, messageData: msg });
+                    processMessage({ companyId, phone, message: messageText, messageData: { ...msg, pushName } });
                 }
             } catch (err) {
                 console.warn(`⚠️ [${companyId}] Erro ao adicionar na fila, processando direto: ${phone}`);

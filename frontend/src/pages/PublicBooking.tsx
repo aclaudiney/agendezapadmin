@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { API_URL } from '../config/api';
 import {
   AlertCircle, Share2, Copy, X, Clock,
   MapPin, Phone, Facebook, Instagram,
@@ -108,11 +109,12 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
   };
 
   useEffect(() => {
-    const clienteSalvo = localStorage.getItem('clienteLogado');
+    if (!companyId) return;
+    const clienteSalvo = localStorage.getItem(`clienteLogado_${companyId}`);
     if (clienteSalvo) {
       setClienteLogado(JSON.parse(clienteSalvo));
     }
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
     const buscarEmpresa = async () => {
@@ -330,7 +332,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
       if (clientes && clientes.length > 0) {
         // ✅ CLIENTE ENCONTRADO
         setClienteLogado(clientes[0]);
-        localStorage.setItem('clienteLogado', JSON.stringify(clientes[0]));
+        localStorage.setItem(`clienteLogado_${companyId}`, JSON.stringify(clientes[0]));
 
         // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
         // ✅ SE NÃO TEM, FECHA O MODAL (login feito com sucesso)
@@ -386,7 +388,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
       // ✅ CONTA CRIADA
       setClienteLogado(novoCliente);
-      localStorage.setItem('clienteLogado', JSON.stringify(novoCliente));
+      localStorage.setItem(`clienteLogado_${companyId}`, JSON.stringify(novoCliente));
 
       // ✅ SE TEM SERVIÇOS SELECIONADOS, VAI PRA CONFIRMAÇÃO
       // ✅ SE NÃO TEM, FECHA O MODAL (conta criada com sucesso)
@@ -413,7 +415,25 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
     try {
       if (!clienteLogado) {
-        setErroMsg('Erro ao confirmar');
+        setErroMsg('Erro ao confirmar: Cliente não identificado.');
+        return;
+      }
+
+      // ✅ VERIFICAR SE O CLIENTE AINDA EXISTE NO BANCO (Evitar erro de FK)
+      const { data: checkCliente, error: errorCheck } = await supabase
+        .from('clientes')
+        .select('id')
+        .eq('id', clienteLogado.id)
+        .eq('company_id', companyId)
+        .single();
+
+      if (errorCheck || !checkCliente) {
+        console.warn('⚠️ Cliente não encontrado no banco. Limpando cache e pedindo login.');
+        localStorage.removeItem(`clienteLogado_${companyId}`);
+        setClienteLogado(null);
+        setModalStep('telefone');
+        setErroMsg('Sua sessão expirou ou o cliente não foi encontrado. Por favor, identifique-se novamente.');
+        setLoadingVerificacao(false);
         return;
       }
 
@@ -470,18 +490,36 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
         profissional_id: s.profissional_id || null,
         data_agendamento: s.data_agendamento,
         hora_agendamento: s.hora_agendamento,
-        status: 'pendente',
+        status: 'confirmado', // Alterado de 'pendente' para 'confirmado' para evitar conflito com agendamento_id se houver lógica de trigger/RPC
         origem: 'web',
         company_id: companyId,
       }));
 
-      const { error } = await supabase
+      console.log('📝 [DEBUG] Tentando inserir agendamentos:', agendamentosParaSalvar);
+
+      const { data: insertedData, error } = await supabase
         .from('agendamentos')
-        .insert(agendamentosParaSalvar);
+        .insert(agendamentosParaSalvar)
+        .select('id');
 
       if (error) {
-        setErroMsg('Erro ao confirmar agendamento');
+        console.error('❌ [ERRO SUPABASE]:', error);
+        setErroMsg(`Erro ao confirmar: ${error.message || 'Verifique se o horário ainda está disponível'}`);
         throw error;
+      }
+
+      // 🔔 NOTIFICAR PROFISSIONAL (Link Público)
+      if (insertedData && insertedData.length > 0) {
+        insertedData.forEach(apt => {
+          fetch(`${API_URL}/api/appointments/notify-new`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              companyId: companyId, // Ajustado para companyId (minúsculo conforme esperado pela rota)
+              appointmentId: apt.id
+            })
+          }).catch(err => console.error('⚠️ Erro ao disparar notificação:', err));
+        });
       }
 
       // ✅ RECARREGAR AGENDAMENTOS APÓS SALVAR
@@ -588,6 +626,7 @@ const PublicBooking: React.FC<PublicBookingProps> = ({ slug }) => {
 
   const handleLogout = () => {
     localStorage.removeItem('clienteLogado');
+    localStorage.removeItem(`clienteLogado_${companyId}`);
     setClienteLogado(null);
     setShowPerfilMenu(false);
   };

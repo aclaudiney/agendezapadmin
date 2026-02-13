@@ -38,17 +38,18 @@ messageQueue.on('failed', (job, err) => {
     console.error(`❌ Job ${job?.id} falhou:`, err.message);
 });
 export async function processMessage(data: any, jobId: string | number = 'direct') {
-    const { companyId, phone, message: messageText, messageData: msg } = data;
-    const jid = `${phone}@s.whatsapp.net`;
-
-    console.log(`\n---------------------------------------------------------`);
-    console.log(`📩 MENSAGEM RECEBIDA [${jobId}]:`);
-    console.log(`   Empresa: ${companyId}`);
-    console.log(`   Cliente: ${phone}`);
-    console.log(`   Texto: "${messageText}"`);
-    console.log(`---------------------------------------------------------\n`);
-
     try {
+        const { companyId, phone, message: messageText, messageData: msg } = data;
+        const pushName = msg?.pushName || null;
+        const jid = `${phone}@s.whatsapp.net`;
+
+        console.log(`\n---------------------------------------------------------`);
+        console.log(`📩 MENSAGEM RECEBIDA [${jobId}]:`);
+        console.log(`   Empresa: ${companyId}`);
+        console.log(`   Cliente: ${phone}`);
+        console.log(`   Texto: "${messageText}"`);
+        console.log(`---------------------------------------------------------\n`);
+
         // Importação dinâmica para evitar Dependência Circular se algum handler importar a fila
         const {
             montarContextoConversa,
@@ -75,7 +76,7 @@ export async function processMessage(data: any, jobId: string | number = 'direct
         await salvarMensagemWhatsApp({
             companyId,
             clientPhone: phone,
-            clientName: contexto.cliente.nome || 'Cliente WhatsApp',
+            clientName: contexto.cliente.nome || pushName || 'Cliente WhatsApp',
             messageText: messageText,
             messageType: 'text',
             direction: 'incoming',
@@ -98,46 +99,8 @@ export async function processMessage(data: any, jobId: string | number = 'direct
                 direction: 'outgoing',
                 conversationType: contexto.tipo
             });
-            return { success: true, blocked: 'closed' };
-        }
 
-        // 4️⃣ ATALHO: CONSULTAR AGENDAMENTOS (sem IA)
-        // ✅ CORREÇÃO: Só entra aqui se for uma intenção clara de consulta de agendamento PRÓPRIO.
-        // Se a mensagem contiver "horário" ou "funciona", deixamos a IA responder com os horários da loja.
-        const msgLower = messageText.toLowerCase();
-        const perguntandoSobreLoja = msgLower.includes('horário') || msgLower.includes('horario') || msgLower.includes('funciona') || msgLower.includes('aberto');
-
-        if (contexto.tipo === 'consultar' && !perguntandoSobreLoja) {
-            // ... (Lógica de consulta simplificada ou chamar handler)
-            // Por agora, vamos deixar a IA tratar se for mais complexo, 
-            // ou replicar a lógica do whatsapp.ts aqui
-            // Replicando lógica do whatsapp.ts:
-            const dataAlvo = dadosValidados?.data || null;
-            const hoje = contexto.dataAtual;
-
-            const formatarDataBR = (yyyyMmDd: string) => {
-                const [a, m, d] = String(yyyyMmDd).split('-');
-                return `${d}/${m}/${a}`;
-            };
-
-            let ags = (contexto.agendamentos || []).filter((a: any) => a?.data && a.data >= hoje);
-            if (dataAlvo) ags = ags.filter((a: any) => a.data === dataAlvo);
-
-            if (ags.length > 0) {
-                const linhas = ags.slice(0, 10).map((a: any) => `- ${a.servico} — ${formatarDataBR(a.data)} às ${a.hora}`);
-                const msgConsulta = `Oi ${contexto.cliente.nome || 'Ney'}! 😊\nPara os próximos dias, você tem:\n${linhas.join('\n')}`;
-
-                await evolutionAPI.sendTextMessage(companyId, phone, msgConsulta);
-                await salvarMensagemWhatsApp({
-                    companyId,
-                    clientPhone: phone,
-                    messageText: msgConsulta,
-                    messageType: 'text',
-                    direction: 'outgoing',
-                    conversationType: contexto.tipo
-                });
-                return { success: true, action: 'consultar' };
-            }
+            return { success: true, blocked: true };
         }
 
         // 5️⃣ PREPARAR DADOS PARA IA
@@ -148,18 +111,8 @@ export async function processMessage(data: any, jobId: string | number = 'direct
         const respostaIA = await gerarRespostaIA({
             ...dadosParaIA,
             companyId,
-            jid: telefone,
-            mensagem: messageText,
-            tipoConversa: contexto.tipo,
-            clienteNome: contexto.cliente.nome,
-            clienteExiste: contexto.cliente.existe,
-            clienteId: contexto.cliente.id,
-            nomeAgente: contexto.nomeAgente,
-            nomeLoja: contexto.nomeLoja,
-            promptBase: contexto.promptBase,
-            servicos: (dadosParaIA as any).servicos,
-            profissionaisLista: (dadosParaIA as any).profissionaisLista,
-            eSolo: (dadosParaIA as any).eSolo,
+            phone: telefone,
+            message: messageText,
             dadosExtraidos: dadosValidados
         });
 
@@ -177,6 +130,7 @@ export async function processMessage(data: any, jobId: string | number = 'direct
             await salvarMensagemWhatsApp({
                 companyId,
                 clientPhone: phone,
+                clientName: contexto.cliente.nome || pushName || 'Cliente WhatsApp',
                 messageText: respostaIA,
                 messageType: 'text',
                 direction: 'outgoing',

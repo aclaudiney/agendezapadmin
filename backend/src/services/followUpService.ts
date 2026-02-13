@@ -14,50 +14,54 @@ interface FollowUpSettings {
 }
 
 export const FollowUpService = {
+    // Cache de memória para evitar disparos simultâneos
+    sentCache: new Set<string>(),
     async getModes(companyId: string, settings: FollowUpSettings) {
         try {
-            const { data: dbModes, error } = await supabase
-                .from('followup_modes')
-                .select('*')
-                .eq('company_id', companyId);
-
-            if (error) throw error;
-
-            const fileModes = dbModes || [];
+            // 1. Carregar módulos do arquivo (onde o frontend está salvando)
+            const baseDir = path.resolve(process.cwd(), 'backend', 'logs');
+            const file = path.join(baseDir, `followup_modes_${companyId}.json`);
             
-            const defaultMode = {
-                id: 'default',
-                name: 'Aviso',
-                is_active: true,
-                warning_time: settings.warning_time || '08:00:00',
-                reminder_minutes: settings.reminder_minutes ?? 60,
-                message_template_warning: settings.message_template_warning || '',
-                message_template_reminder: settings.message_template_reminder || '',
-                trigger_type: 'time_fixed',
-                trigger_days: null
-            };
+            let activeModes = [];
+            if (fs.existsSync(file)) {
+                try {
+                    const raw = fs.readFileSync(file, 'utf-8');
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        activeModes = parsed.filter((m: any) => m.is_active === true || m.is_active === 'true');
+                    }
+                } catch (e) {
+                    console.error(`❌ Erro ao ler arquivo de modos para ${companyId}:`, e);
+                }
+            }
 
-            const merged = [defaultMode, ...fileModes.filter(m => String(m?.id) !== 'default')];
-            const normalized = merged.map((m: any) => {
-                const triggerType = m.trigger_type
-                    || ((m.trigger_days !== undefined && m.trigger_days !== null) ? 'dias_apos' : (m.name && String(m.name).toLowerCase().includes('lembrete') ? 'antecedencia' : 'time_fixed'));
-                const triggerDays = triggerType === 'dias_apos' ? (m.trigger_days ?? 10) : null;
+            console.log(`\n🔍 [DEBUG MODOS] Empresa: ${companyId}`);
+            console.log(`   -> Módulos Ativos no Arquivo: ${activeModes.length}`);
+
+            if (activeModes.length === 0) {
+                console.log(`   -> 🛑 TRAVA ABSOLUTA: Empresa sem nenhum módulo ativo. NADA será enviado.`);
+                return []; 
+            }
+
+            console.log(`   -> Módulos que serão processados: ${activeModes.map((m: any) => m.name).join(', ')}`);
+
+            const normalized = activeModes.map((m: any) => {
+                const triggerType = m.trigger_type;
+                
                 return {
-                    id: String(m.id || m.mode), // Fallback para mode se id não existir
-                    name: m.name || m.mode || 'Modo',
-                    is_active: m.is_active !== undefined ? !!m.is_active : true,
-                    warning_time: m.warning_time || '08:00:00',
-                    reminder_minutes: m.reminder_minutes ?? 60,
-                    message_template_warning: m.message_template_warning || (m.settings?.message_template_warning) || '',
-                    message_template_reminder: m.message_template_reminder || (m.settings?.message_template_reminder) || '',
+                    id: m.id,
+                    name: m.name,
+                    is_active: true,
                     trigger_type: triggerType,
-                    trigger_days: triggerDays
+                    warning_time: m.warning_time,
+                    reminder_minutes: m.reminder_minutes,
+                    trigger_days: m.trigger_days,
+                    // Template específico do módulo (o frontend salva em campos diferentes dependendo do tipo)
+                    message_template: m.message_template || m.message_template_warning || m.message_template_reminder || ''
                 };
             });
 
-            const uniq = new Map<string, any>();
-            for (const m of normalized) uniq.set(m.id, m);
-            return Array.from(uniq.values());
+            return normalized;
         } catch (error) {
             console.error(`❌ [FOLLOW-UP] Erro ao carregar modos do banco:`, error);
             return [];
@@ -95,43 +99,64 @@ export const FollowUpService = {
     async checkAndSendFollowUps(companyId: string) {
         // 1. Obter configurações
         const settings = await db.getFollowUpSettings(companyId);
-
-        if (!settings || !settings.is_active) {
-            return; // Follow-up desativado ou não configurado
+        
+        // Log detalhado para depuração
+        if (settings) {
+            console.log(`🔍 [FOLLOW-UP] Empresa ${companyId}: is_active=${settings.is_active}, reminder_minutes=${settings.reminder_minutes}`);
+        } else {
+            console.log(`⚠️ [FOLLOW-UP] Empresa ${companyId}: Nenhuma configuração encontrada.`);
         }
 
-        const modes = (await this.getModes(companyId, settings as FollowUpSettings)).filter(m => m.is_active);
+        // Se não tem configuração, não faz nada. Se tem, e is_active não for explicitamente false, assume true.
+        if (!settings || settings.is_active === false) {
+            return;
+        }
+
+        const allModes = await this.getModes(companyId, settings as FollowUpSettings);
+        const modes = allModes.filter(m => m.is_active);
+        
+        console.log(`🔍 [FOLLOW-UP] Modos ativos: ${modes.length} (${modes.map(m => m.name).join(', ')})`);
+        
         if (modes.length === 0) return;
 
-        const hoje = new Date();
-        const dataHojeStr = format(hoje, 'yyyy-MM-dd');
-        const horaAtualStr = format(hoje, 'HH:mm');
+        // ✅ Usar timezone de Brasília para evitar problemas com UTC
+        const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+        const dataHojeStr = format(agora, 'yyyy-MM-dd');
+        
+        // ❌ REMOVIDO: avisado: false (Pois queremos verificar múltiplos avisos por agendamento)
+        const agendamentosHoje = await db.getAgendamentos(companyId, {
+            data: dataHojeStr
+        });
+        
+        const agendamentos = (agendamentosHoje || []).filter((a: any) => 
+            a?.status !== 'cancelado' && 
+            a?.status !== 'finalizado' &&
+            a?.status !== 'ausente'
+        );
+
+        console.log(`🔍 [FOLLOW-UP] Total de agendamentos hoje (${dataHojeStr}): ${agendamentos.length}`);
 
         const clientes = await db.listarClientes(companyId);
-        const clientesAtivos = (clientes || []).filter((c: any) => c?.ativo !== false);
-
         const clienteById = new Map<string, any>();
         const clienteModes = new Map<string, Set<string>>();
-        for (const c of clientesAtivos) {
+        
+        for (const c of (clientes || [])) {
             clienteById.set(String(c.id), c);
             const raw = c.followup_mode;
             const ids = (typeof raw === 'string' ? raw.split(',').map((s: string) => s.trim()).filter(Boolean) : Array.isArray(raw) ? raw : []) as string[];
             clienteModes.set(String(c.id), new Set(ids.map(String)));
         }
 
-        const agendamentosHoje = await db.getAgendamentos(companyId, {
-            data: dataHojeStr,
-            avisado: false
-        });
-        const agendamentos = (agendamentosHoje || []).filter((a: any) => a?.status !== 'cancelado' && a?.status !== 'finalizado');
-
         for (const agendamento of agendamentos) {
             const clienteId = String(agendamento.cliente_id);
-            const selecionados = clienteModes.get(clienteId);
-            if (!selecionados || selecionados.size === 0) continue;
+            const cliente = clienteById.get(clienteId);
+            
+            if (!cliente) {
+                console.log(`⚠️ [FOLLOW-UP] Agendamento ${agendamento.id} sem cliente encontrado.`);
+                continue;
+            }
 
-            const cliente = clienteById.get(clienteId) || await db.getClienteById(clienteId, companyId);
-            if (!cliente) continue;
+            console.log(`🔍 [FOLLOW-UP] Agendamento ${agendamento.id} (${agendamento.hora_agendamento}) - Cliente: ${cliente.nome}.`);
 
             const profissional = await db.getProfissionalById(agendamento.profissional_id, companyId);
             const servico = await db.getServicoById(agendamento.servico_id, companyId);
@@ -145,49 +170,93 @@ export const FollowUpService = {
             };
 
             for (const mode of modes) {
-                if (!selecionados.has(String(mode.id))) continue;
+                // A lista 'modes' já contém APENAS módulos reais e ativos da empresa.
+                console.log(`   -> 🔔 Verificando Gatilho: ${mode.name} (${mode.trigger_type})`);
+
                 if (mode.trigger_type === 'time_fixed') {
                     const parts = String(mode.warning_time || '08:00:00').split(':');
                     const h = parseInt(parts[0] || '8');
                     const m = parseInt(parts[1] || '0');
-                    const horaAviso = new Date(hoje);
+                    const horaAviso = new Date(agora);
                     horaAviso.setHours(h, m, 0, 0);
-                    if (hoje >= horaAviso) {
-                        const type = `mode:${mode.id}:time_fixed`;
-                        const jaEnviou = await db.checkFollowUpSent(agendamento.id, type);
-                        if (!jaEnviou) {
-                            const msg = this.replaceTemplate(mode.message_template_warning, vars);
-                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg);
+
+                    // SÓ ENVIA SE: 
+                    // 1. Já passou da hora do aviso (ex: 08:00)
+                    // 2. O agendamento ainda NÃO aconteceu (agora < dataAgendamento)
+                    if (agora >= horaAviso) {
+                        const horaStr = agendamento.hora_agendamento || agendamento.horario;
+                        if (horaStr) {
+                            const agendamentoHoraParts = String(horaStr).split(':');
+                            const dataAgendamento = new Date(agora);
+                            dataAgendamento.setHours(parseInt(agendamentoHoraParts[0]), parseInt(agendamentoHoraParts[1]), 0, 0);
+
+                            if (agora > dataAgendamento) {
+                                console.log(`   -> ⏩ Ignorando Aviso Fixo: O agendamento das ${agendamento.hora_agendamento} já passou.`);
+                                continue;
+                            }
                         }
+
+                        // Normalizar o tipo para a constraint do banco
+                        const type = 'aviso';
+                        
+                        const jaEnviou = await db.checkFollowUpSent(agendamento.id, type);
+                        if (!jaEnviou && !this.sentCache.has(`${agendamento.id}_${type}`)) {
+                            console.log(`🚀 [FOLLOW-UP] DISPARANDO AVISO FIXO para ${cliente.nome}!`);
+                            const msg = this.replaceTemplate(mode.message_template, vars);
+                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg);
+                        } else {
+                            // Se já enviou, alimenta o cache para garantir que não tente novamente nesta execução
+                            this.sentCache.add(`${agendamento.id}_${type}`);
+                            console.log(`   -> ✅ Aviso Fixo já enviado anteriormente para ${cliente.nome}.`);
+                        }
+                    } else {
+                        console.log(`   -> ⏳ Hora do Aviso (${mode.warning_time}) ainda não chegou. Agora: ${format(agora, 'HH:mm')}`);
                     }
                 }
+
                 if (mode.trigger_type === 'antecedencia') {
                     const horaStr = agendamento.hora_agendamento || agendamento.horario;
                     if (!horaStr) continue;
+                    
                     const agendamentoHoraParts = String(horaStr).split(':');
-                    const agendamentoDate = new Date(hoje);
+                    const agendamentoDate = new Date(agora);
                     agendamentoDate.setHours(parseInt(agendamentoHoraParts[0]), parseInt(agendamentoHoraParts[1]), 0, 0);
-                    const diffMinutos = differenceInMinutes(agendamentoDate, hoje);
-                    const lembreteMin = mode.reminder_minutes ?? settings.reminder_minutes;
+                    
+                    const diffMinutos = differenceInMinutes(agendamentoDate, agora);
+                    const lembreteMin = mode.reminder_minutes ?? 0;
+                    
+                    console.log(`   -> Modo: ${mode.name} | Faltam: ${diffMinutos} min | Gatilho: ${lembreteMin} min`);
+
+                    // SÓ ENVIA SE:
+                    // 1. Falta o tempo configurado (ex: 15 min)
+                    // 2. O agendamento ainda NÃO aconteceu (diffMinutos > 0)
                     if (diffMinutos <= lembreteMin && diffMinutos > 0) {
-                        const type = `mode:${mode.id}:antecedencia`;
+                        const type = 'lembrete';
+                        
                         const jaEnviou = await db.checkFollowUpSent(agendamento.id, type);
-                        if (!jaEnviou) {
-                            const msg = this.replaceTemplate(mode.message_template_reminder, { ...vars, minutos: lembreteMin });
+                        if (!jaEnviou && !this.sentCache.has(`${agendamento.id}_${type}`)) {
+                            console.log(`🚀 [FOLLOW-UP] DISPARANDO LEMBRETE para ${cliente.nome}!`);
+                            const msg = this.replaceTemplate(mode.message_template, { ...vars, minutos: lembreteMin });
                             await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg);
+                        } else {
+                            // Se já enviou, alimenta o cache para garantir que não tente novamente nesta execução
+                            this.sentCache.add(`${agendamento.id}_${type}`);
+                            console.log(`   -> ✅ Lembrete já enviado anteriormente para ${cliente.nome}.`);
                         }
+                    } else {
+                        console.log(`   -> ⏳ Lembrete (${lembreteMin} min): Faltam ${diffMinutos} min. Ainda não é hora.`);
                     }
                 }
             }
         }
 
+        // --- Lógica de Recorrência (dias_apos) ---
         const diasModes = modes.filter(m => m.trigger_type === 'dias_apos' && (m.trigger_days ?? 0) > 0);
         if (diasModes.length === 0) return;
 
+        const clientesAtivos = (clientes || []).filter((c: any) => c?.ativo !== false);
         for (const cliente of clientesAtivos) {
-            const selecionados = clienteModes.get(String(cliente.id));
-            if (!selecionados || selecionados.size === 0) continue;
-            const ativos = diasModes.filter(m => selecionados.has(String(m.id)));
+            const ativos = diasModes; // diasModes já são os módulos REAIS e ATIVOS do banco
             if (ativos.length === 0) continue;
 
             const { data: lastFinalizado, error } = await supabase
@@ -205,30 +274,39 @@ export const FollowUpService = {
 
             const lastDateParts = String(lastFinalizado.data_agendamento).split('-').map(Number);
             const lastDate = new Date(Date.UTC(lastDateParts[0], (lastDateParts[1] || 1) - 1, lastDateParts[2] || 1));
-            const todayParts = dataHojeStr.split('-').map(Number);
-            const todayDate = new Date(Date.UTC(todayParts[0], (todayParts[1] || 1) - 1, todayParts[2] || 1));
+            
+            const todayDate = new Date(Date.UTC(agora.getFullYear(), agora.getMonth(), agora.getDate()));
             const diffDias = differenceInCalendarDays(todayDate, lastDate);
+            
             if (diffDias <= 0) continue;
-
-            const profissional = await db.getProfissionalById(lastFinalizado.profissional_id, companyId);
-            const servico = await db.getServicoById(lastFinalizado.servico_id, companyId);
-
-            const vars = {
-                cliente_nome: cliente.nome,
-                profissional: profissional ? profissional.nome : 'Profissional',
-                servico: servico ? servico.nome : 'Serviço',
-                horario: lastFinalizado.hora_agendamento || '',
-                minutos: 0
-            };
 
             for (const mode of ativos) {
                 const triggerDays = mode.trigger_days ?? 0;
-                if (diffDias < triggerDays) continue;
-                const type = `mode:${mode.id}:dias_apos:${triggerDays}`;
-                const jaEnviou = await db.checkFollowUpSent(lastFinalizado.id, type);
-                if (jaEnviou) continue;
-                const msg = this.replaceTemplate(mode.message_template_warning, vars);
-                await this.sendMessage(companyId, cliente.telefone, lastFinalizado.id, type, msg);
+                if (diffDias === triggerDays) { // Exatamente no dia X após o corte
+                    const type = 'recorrencia';
+                    
+                    const jaEnviou = await db.checkFollowUpSent(lastFinalizado.id, type);
+                    if (jaEnviou || this.sentCache.has(`${lastFinalizado.id}_${type}`)) {
+                        // Alimenta o cache se já foi enviado para evitar re-checar no banco
+                        this.sentCache.add(`${lastFinalizado.id}_${type}`);
+                        continue;
+                    }
+
+                    const profissional = await db.getProfissionalById(lastFinalizado.profissional_id, companyId);
+                    const servico = await db.getServicoById(lastFinalizado.servico_id, companyId);
+
+                    const vars = {
+                        cliente_nome: cliente.nome,
+                        profissional: profissional ? profissional.nome : 'Profissional',
+                        servico: servico ? servico.nome : 'Serviço',
+                        horario: lastFinalizado.hora_agendamento || '',
+                        minutos: 0
+                    };
+
+                    console.log(`🚀 [FOLLOW-UP] DISPARANDO RECORRÊNCIA para ${cliente.nome} (${diffDias} dias após)!`);
+                    const msg = this.replaceTemplate(mode.message_template, vars);
+                    await this.sendMessage(companyId, cliente.telefone, lastFinalizado.id, type, msg);
+                }
             }
         }
     },
@@ -245,24 +323,66 @@ export const FollowUpService = {
     },
 
     async sendMessage(companyId: string, telefone: string, agendamentoId: string, type: string, message: string) {
+        // ✅ NORMALIZAÇÃO CRÍTICA: O banco só aceita 'aviso', 'lembrete' ou 'recorrencia'
+        // Se o tipo vier como 'antecedencia', 'time_fixed', etc, convertemos para o que o banco aceita
+        let normalizedType = 'lembrete'; // padrão
+        if (type === 'aviso' || type === 'time_fixed') normalizedType = 'aviso';
+        if (type === 'lembrete' || type === 'antecedencia') normalizedType = 'lembrete';
+        if (type === 'recorrencia' || type === 'dias_apos') normalizedType = 'recorrencia';
+
+        const cacheKey = `${agendamentoId}_${normalizedType}`;
+
+        // 0. TRAVA DE MEMÓRIA (Rápida)
+        if (this.sentCache.has(cacheKey)) {
+            console.log(`   -> ⏩ [CACHE] Bloqueado: ${normalizedType} já processado nesta execução.`);
+            return;
+        }
+        
         try {
-            await evolutionAPI.sendTextMessage(companyId, telefone, message);
-            await db.logFollowUpMessage(companyId, agendamentoId, type, 'sent');
+            // 1. TRAVA DE BANCO (Persistente)
+            const { data: alreadySent, error: checkError } = await supabase
+                .from('follow_up_messages')
+                .select('id')
+                .eq('appointment_id', agendamentoId)
+                .eq('type', normalizedType)
+                .eq('status', 'sent')
+                .maybeSingle();
 
-            // ✅ MARCAR COMO AVISADO PARA EVITAR LOOP
-            await supabase
-                .from('agendamentos')
-                .update({ avisado: true })
-                .eq('id', agendamentoId);
-
-        } catch (error: any) {
-            console.error(`❌ [FOLLOW-UP] Erro ao enviar (${type}):`, error.message);
-            await db.logFollowUpMessage(companyId, agendamentoId, type, 'failed');
-
-            // Se falhou por WhatsApp desconectado, registrar log detalhado
-            if (error.message?.includes('WhatsApp não está conectado')) {
-                console.warn(`⚠️ [FOLLOW-UP] Falha de conexão detectada para empresa ${companyId}`);
+            if (alreadySent) {
+                console.log(`   -> ⏩ [TRAVA BANCO] Abortando: ${normalizedType} já enviado para ${agendamentoId}.`);
+                this.sentCache.add(cacheKey); // Alimenta o cache para não consultar o banco de novo
+                return;
             }
+
+            if (checkError) {
+                console.error(` ❌ Erro ao verificar duplicidade:`, checkError.message);
+            }
+
+            // 2. DISPARAR NA EVOLUTION
+            const result = await evolutionAPI.sendTextMessage(companyId, telefone, message);
+            
+            if (result.success) {
+                console.log(` ✅ [Evolution] Mensagem enviada com sucesso!`);
+                
+                // 3. REGISTRAR IMEDIATAMENTE (Memória + Banco)
+                this.sentCache.add(cacheKey);
+                
+                const { error: insertError } = await supabase.from('follow_up_messages').insert({
+                    company_id: companyId,
+                    appointment_id: agendamentoId,
+                    type: normalizedType,
+                    status: 'sent',
+                    sent_at: new Date()
+                });
+
+                if (insertError) {
+                    console.error(` ❌ Erro ao registrar no banco:`, insertError.message);
+                }
+            } else {
+                console.error(` ❌ [Evolution] Falha ao enviar:`, result.error);
+            }
+        } catch (error: any) {
+            console.error(` ❌ Erro crítico em sendMessage:`, error.message);
         }
     }
 };

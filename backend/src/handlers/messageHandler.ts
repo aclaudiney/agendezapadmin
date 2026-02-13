@@ -1,16 +1,6 @@
-/**
- * MESSAGE HANDLER - AGENDEZAP
- * Recebe mensagem do WhatsApp, limpa, formata e prepara contexto para IA
- * Este é o NODE DE ENTRADA do fluxo!
- * 
- * ✅ CORRIGIDO: Import e chamada da função extrairDadosMensagem
- */
-
 import { ConversationContext, TipoConversa } from '../types/conversation.js';
 import { obterDadosClienteParaIA, formatarTelefone } from '../services/clientService.js';
 import { buscarAgendamentosCliente, buscarProximoAgendamento } from '../services/appointmentService.js';
-import { extrairDadosMensagem as extrairDadosDoTexto } from '../services/extractionService.js'; // ✅ RENOMEADO!
-import { validarEEnriquecerContexto } from '../services/validationPipeline.js';
 import { db } from '../supabase.js';
 
 // ============================================
@@ -194,7 +184,7 @@ export const montarContextoConversa = async (
     // 3. BUSCAR DADOS DO CLIENTE
     console.log(`   3️⃣ Buscando cliente no banco...`);
     const dadosCliente = await obterDadosClienteParaIA(telefone, companyId);
-    console.log(`      Cliente existe: ${dadosCliente.existe}`);
+    console.log(`      Resultado busca:`, JSON.stringify(dadosCliente));
     if (dadosCliente.existe) {
       console.log(`      Nome: ${dadosCliente.nome}`);
     }
@@ -296,65 +286,47 @@ export const montarContextoConversa = async (
 };
 
 // ============================================
-// 3️⃣B EXTRAIR DADOS DA MENSAGEM (✅ CORRIGIDO!)
+// 3️⃣B EXTRAIR DADOS DA MENSAGEM (SIMPLIFICADO)
 // ============================================
 
 export const extrairDadosMensagem = async (
   mensagem: string,
   contexto: ConversationContext
 ) => {
-  try {
-    console.log(`\n📊 Extraindo dados da mensagem...`);
-
-    // ✅ CHAMA A FUNÇÃO IMPORTADA (renomeada para evitar conflito)
-    const dadosExtraidos = await extrairDadosDoTexto(mensagem, contexto);
-
-    return dadosExtraidos;
-  } catch (error) {
-    console.error('❌ Erro ao extrair dados:', error);
-    return {
-      servico: null,
-      data: null,
-      hora: null,
-      profissional: null,
-      nome: null,
-      periodo: null
-    };
-  }
+  // ✅ NOVA ARQUITETURA: A IA faz tudo via function calling
+  // Retorna objeto vazio para manter compatibilidade com código existente
+  return {
+    servico: null,
+    data: null,
+    hora: null,
+    profissional: null,
+    nome: null,
+    periodo: null
+  };
 };
 
 // ============================================
-// 3️⃣C VALIDAR E ENRIQUECER DADOS (NOVO!)
+// 3️⃣C VALIDAR E ENRIQUECER DADOS (SIMPLIFICADO)
 // ============================================
 
 export const validarDadosExtraidos = async (
   dadosExtraidos: any,
   contexto: ConversationContext
 ) => {
-  try {
-    console.log(`\n🔍 Validando dados extraídos...`);
-
-    const dadosValidados = await validarEEnriquecerContexto(
-      dadosExtraidos,
-      contexto
-    );
-
-    return dadosValidados;
-  } catch (error) {
-    console.error('❌ Erro validarDadosExtraidos:', error);
-    return {
-      ...dadosExtraidos,
-      validacoes: {
-        diaAberto: true,
-        horarioValido: true,
-        horarioPassado: false,
-        dentroFuncionamento: true,
-        sugestoesHorarios: [],
-        sugestoesProfissionais: [],
-        periodosDisponiveis: []
-      }
-    };
-  }
+  // ✅ NOVA ARQUITETURA: A IA faz tudo via function calling
+  // Retorna objeto vazio para manter compatibilidade com código existente
+  return {
+    ...dadosExtraidos,
+    validacoes: {
+      diaAberto: true,
+      horarioValido: true,
+      horarioPassado: false,
+      dentroFuncionamento: true,
+      sugestoesHorarios: [],
+      sugestoesProfissionais: [],
+      periodosDisponiveis: []
+    }
+  };
 };
 
 // ============================================
@@ -367,16 +339,16 @@ export const prepararDadosParaIA = (contexto: ConversationContext, dadosValidado
 
     // ✅ CORREÇÃO (Fluxo 3 & 2): Se dia fechado, limpar dados e marcar erro
     if (dadosValidados?.validacoes?.diaAberto === false) {
-        console.log(`   🚫 DIA FECHADO DETECTADO! Limpando horários para evitar alucinação.`);
-        
-        // Zera tudo que possa confundir a IA
-        dadosValidados.horariosDisponiveis = [];
-        dadosValidados.periodosDisponiveis = [];
-        dadosValidados.validacoes.sugestoesHorarios = [];
-        
-        // Flag explícita para o aiService
-        dadosValidados.erro_fluxo = "DIA_FECHADO";
-        dadosValidados.motivo_fechamento = dadosValidados.validacoes.motivoErro;
+      console.log(`   🚫 DIA FECHADO DETECTADO! Limpando horários para evitar alucinação.`);
+
+      // Zera tudo que possa confundir a IA
+      dadosValidados.horariosDisponiveis = [];
+      dadosValidados.periodosDisponiveis = [];
+      dadosValidados.validacoes.sugestoesHorarios = [];
+
+      // Flag explícita para o aiService
+      dadosValidados.erro_fluxo = "DIA_FECHADO";
+      dadosValidados.motivo_fechamento = dadosValidados.validacoes.motivoErro;
     }
 
     const resumo = {

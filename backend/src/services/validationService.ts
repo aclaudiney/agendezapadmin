@@ -374,32 +374,37 @@ export const buscarHorariosDisponiveis = async (
   duracaoServico: number // minutos
 ): Promise<string[]> => {
   try {
-    // Buscar configuração
-    const { data: config } = await supabase
-      .from('company_settings')
-      .select('*')
-      .eq('company_id', companyId)
-      .single();
+    // 1. Buscar configuração centralizada (com fallback configuracoes -> company_settings)
+    const { db } = await import('../supabase.js');
+    const config = await db.getConfiguracao(companyId);
 
-    if (!config) return [];
+    if (!config) {
+      console.log(`   ⚠️ Configuração não encontrada para empresa ${companyId}`);
+      return [];
+    }
 
-    // ✅ CORRIGIDO: Pegar dia da semana COM TIMEZONE
+    // 2. Pegar dia da semana COM TIMEZONE BRASIL
     const dataObj = new Date(`${data}T12:00:00-03:00`);
     const diaSemana = dataObj.getDay();
     const nomesDiaIngles = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+    const nomeDiaSemAcento = nomesDiaIngles[diaSemana];
 
-    // ✅ PRIORIDADE 1: Verificar dias_abertura (JSON)
-    if (config.dias_abertura) {
-      const nomeDiaSemAcento = nomesDiaIngles[diaSemana];
-      if (config.dias_abertura[nomeDiaSemAcento] === false) return [];
+    // 3. Verificar se o dia está aberto
+    if (config.dias_abertura && config.dias_abertura[nomeDiaSemAcento] === false) {
+      console.log(`   🚫 Dia ${nomeDiaSemAcento} está marcado como FECHADO`);
+      return [];
     }
 
-    // ✅ PRIORIDADE 2: Buscar horário do dia
-    const horarioDoDia = config[`horario_${nomesDiaIngles[diaSemana]}`];
+    // 4. Buscar horário do dia (ex: "08:00-18:00")
+    const horarioDoDiaRaw = config[`horario_${nomeDiaSemAcento}`];
+    const horarioDoDia = typeof horarioDoDiaRaw === 'string' ? horarioDoDiaRaw : String(horarioDoDiaRaw || '');
 
-    if (horarioDoDia === 'FECHADO' || !horarioDoDia) return [];
+    if (horarioDoDia === 'FECHADO' || !horarioDoDia || horarioDoDia.trim() === '') {
+      console.log(`   🚫 Horário para ${nomeDiaSemAcento} é FECHADO`);
+      return [];
+    }
 
-    // Buscar agendamentos já existentes
+    // 5. Buscar agendamentos já existentes
     const { data: agendamentos } = await supabase
       .from('agendamentos')
       .select('hora_agendamento')
@@ -408,8 +413,6 @@ export const buscarHorariosDisponiveis = async (
       .eq('company_id', companyId)
       .neq('status', 'cancelado');
 
-    // ✅ CORREÇÃO: Formatar horários ocupados para HH:MM (removendo segundos se houver)
-    // E arredondar para baixo para bloquear o slot da grade (ex: 17:01 vira 17:00)
     const horariosOcupados = (agendamentos || []).map((a: any) => {
       if (typeof a.hora_agendamento !== 'string') return a.hora_agendamento;
       const [h, m] = a.hora_agendamento.split(':').map(Number);
@@ -417,29 +420,52 @@ export const buscarHorariosDisponiveis = async (
       return `${String(h).padStart(2, '0')}:${String(mArredondado).padStart(2, '0')}`;
     });
 
-    // ✅ CORRIGIDO: Usar horarioDoDia (ex: "09:00-18:00")
-    const [horaAbertura, minAbertura] = horarioDoDia.split('-')[0].split(':').map(Number);
-    const [horaFechamento, minFechamento] = horarioDoDia.split('-')[1].split(':').map(Number);
+    // 6. Configurar limites de horário
+    const [aberturaPart, fechamentoPart] = horarioDoDia.split('-');
+    const [horaAbertura, minAbertura] = aberturaPart.split(':').map(Number);
+    const [horaFechamento, minFechamento] = fechamentoPart.split(':').map(Number);
+
+    // 7. Obter hora atual para filtrar passados (Timezone Brasil)
+    const agora = new Date();
+    const formatterData = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const formatterHora = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false });
+    
+    const [diaAtual, mesAtual, anoAtual] = formatterData.format(agora).split('/');
+    const dataAtualISO = `${anoAtual}-${mesAtual}-${diaAtual}`;
+    const [hAtual, mAtual] = formatterHora.format(agora).split(':').map(Number);
+    const minutoAtualTotal = hAtual * 60 + mAtual;
 
     const horarios: string[] = [];
-    let hora = horaAbertura;
-    let min = minAbertura;
+    let horaCursor = horaAbertura;
+    let minCursor = minAbertura;
 
-    while (hora < horaFechamento || (hora === horaFechamento && min < minFechamento)) {
-      const horarioFormatado = `${String(hora).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    // 8. Gerar slots
+    while (horaCursor < horaFechamento || (horaCursor === horaFechamento && minCursor < minFechamento)) {
+      const horarioFormatado = `${String(horaCursor).padStart(2, '0')}:${String(minCursor).padStart(2, '0')}`;
+      const minutoCursorTotal = horaCursor * 60 + minCursor;
 
-      // Verificar se há tempo suficiente até o fechamento
-      const minutosFim = horaFechamento * 60 + minFechamento;
-      const minutosAgora = hora * 60 + min + duracaoServico;
+      // REGRAS DE FILTRO:
+      // a) Não pode estar ocupado
+      // b) Não pode ultrapassar o fechamento considerando a duração
+      // c) Se for hoje, não pode ser no passado (damos margem de 30 min)
+      
+      const cabeNoHorario = (minutoCursorTotal + duracaoServico) <= (horaFechamento * 60 + minFechamento);
+      const estaOcupado = horariosOcupados.includes(horarioFormatado);
+      
+      let noPassado = false;
+      if (data === dataAtualISO) {
+        // Se for hoje, o slot tem que ser pelo menos 30 minutos no futuro
+        noPassado = minutoCursorTotal <= (minutoAtualTotal + 30);
+      }
 
-      if (minutosAgora <= minutosFim && !horariosOcupados.includes(horarioFormatado)) {
+      if (cabeNoHorario && !estaOcupado && !noPassado) {
         horarios.push(horarioFormatado);
       }
 
-      min += 30;
-      if (min >= 60) {
-        min = 0;
-        hora += 1;
+      minCursor += 30;
+      if (minCursor >= 60) {
+        minCursor = 0;
+        horaCursor += 1;
       }
     }
 

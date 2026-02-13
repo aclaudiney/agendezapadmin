@@ -17,6 +17,7 @@ export const db = {
 
     async getCliente(telefone: string, companyId: string) {
         try {
+            console.log(`🔍 [DB] getCliente - Telefone: ${telefone}, CompanyId: ${companyId}`);
             const { data, error } = await supabase
                 .from('clientes')
                 .select('*')
@@ -27,6 +28,12 @@ export const db = {
             if (error) {
                 console.error("❌ Erro getCliente:", error.message);
                 return null;
+            }
+
+            if (data) {
+                console.log(`✅ [DB] Cliente encontrado: ${data.nome} (ID: ${data.id})`);
+            } else {
+                console.log(`ℹ️ [DB] Nenhum cliente encontrado para este telefone nesta empresa.`);
             }
 
             return data;

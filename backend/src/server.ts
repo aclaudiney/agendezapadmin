@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 import crmRoutes from './routes/crmRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import followUpRoutes from './routes/followUpRoutes.js';
+import appointmentRoutes from './routes/appointmentRoutes.js';
 import { FollowUpService } from './services/followUpService.js';
 import { evolutionAPI } from './services/whatsapp/evolutionAPI.js';
 import evolutionWebhooks from './routes/webhooks.js';
@@ -21,6 +22,7 @@ const PORT = process.env.PORT || 3001;
 app.use('/api/crm', crmRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/follow-up', followUpRoutes);
+app.use('/api/appointments', appointmentRoutes);
 app.use('/webhooks', evolutionWebhooks);
 
 // ✅ INTERFACE PARA TIPAR REQ.PARAMS CORRETAMENTE
@@ -364,5 +366,19 @@ app.listen(PORT, async () => {
     await initAllEvolutionInstances();
 
     console.log(`\n✅ Servidor pronto! Acesse em: http://localhost:${PORT}`);
-    // ... rest of console logs
+
+    // ✅ INICIALIZAR CRON DE FOLLOW-UP (Verificar mensagens a cada 1 minuto)
+    console.log("⏰ [FOLLOW-UP] Agendando verificação periódica (1 min)...");
+    setInterval(async () => {
+        try {
+            await FollowUpService.processAllCompanies();
+        } catch (error) {
+            console.error("❌ [FOLLOW-UP] Erro na execução periódica:", error);
+        }
+    }, 1 * 60 * 1000); // 1 minuto
+
+    // Executar uma vez no início para não esperar 10 min
+    setTimeout(() => {
+        FollowUpService.processAllCompanies().catch(console.error);
+    }, 5000); // 5 segundos após subir
 });

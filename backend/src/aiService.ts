@@ -1,1312 +1,714 @@
-/**
- * AI SERVICE - AGENDEZAP
- * Gerencia chamadas à IA Gemini com contexto estruturado
- * Sistema de validação integrado para melhor UX
- * 
- * ✅ CORRIGIDO ETAPA 1:
- * - IA VÊ horariosDisponiveis e periodosDisponiveis
- * - IA NÃO ignora "hoje/amanhã"
- * - IA MOSTRA horários ao cliente
- * 
- * ✅ CORRIGIDO ETAPA 2:
- * - IA mostra TODOS os horários do período escolhido (não apenas 5)
- * - Transparência total com o cliente
- */
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { supabase } from './supabase.js';
+import { executeTools } from './services/toolExecutor.js';
 
-import axios from 'axios';
-import { ConversationContext } from './types/conversation.js';
-import { tentarAgendar } from './AgendamentoController.js';
-import { criarNovoCliente } from './services/clientService.js';
-import { salvarContextoConversa } from './services/extractionService.js'; // ✅ IMPORTADO
-import { cancelarAgendamento, atualizarAgendamento, adicionarObservacao as addObs } from './services/appointmentService.js';
-import { validarDiaAberto } from './services/validationService.js'; // Adicionado para validação precoce de dia aberto
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// Memória de chat segregada por empresa e usuário (BACKUP EM MEMÓRIA)
-const chatsMemoria: Record<string, any[]> = {};
-
-// ✅ FUNÇÕES DE PERSISTÊNCIA NO BANCO
-const carregarHistoricoBanco = async (companyId: string, jid: string) => {
-    try {
-        const response = await axios.get(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`, {
-            params: {
-                company_id: `eq.${companyId}`,
-                client_jid: `eq.${jid}`,
-                select: 'role,content',
-                order: 'created_at.asc'
+// Definição das ferramentas (functions) que a IA pode chamar
+const tools: any[] = [
+    {
+        name: 'get_available_slots',
+        description: 'Busca horários livres para uma data. Informe o período (manha, tarde, noite) se o cliente preferir.',
+        parameters: {
+            type: 'object',
+            properties: {
+                date: { type: 'string', description: 'Data YYYY-MM-DD' },
+                service: { type: 'string', description: 'Serviço' },
+                professional: { type: 'string', description: 'Profissional' },
+                period: { type: 'string', enum: ['manha', 'tarde', 'noite', 'todos'], description: 'Período do dia' },
+                company_id: { type: 'string', description: 'ID da empresa (obrigatório para isolamento)' }
             },
-            headers: {
-                'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`
-            }
-        });
+            required: ['date', 'company_id']
+        }
+    },
+    {
+        name: 'create_appointment',
+        description: 'Cria agendamento. Use IMEDIATAMENTE após o cliente escolher um horário. Não apenas confirme com texto, EXECUTE esta ferramenta.',
+        parameters: {
+            type: 'object',
+            properties: {
+                date: { type: 'string' },
+                time: { type: 'string' },
+                service: { type: 'string' },
+                professional: { type: 'string' },
+                client_name: { type: 'string' },
+                valor: { type: 'number', description: 'Preço do serviço (obrigatório se souber)' },
+                company_id: { type: 'string' }
+            },
+            required: ['date', 'time', 'service', 'professional', 'company_id']
+        }
+    },
+    {
+        name: 'list_appointments',
+        description: 'Lista agendamentos ativos. OBRIGATÓRIO chamar antes de cancelar para obter o UUID correto.',
+        parameters: {
+            type: 'object',
+            properties: {
+                company_id: { type: 'string' }
+            },
+            required: ['company_id']
+        }
+    },
+    {
+        name: 'cancel_appointment',
+        description: 'Cancela agendamento. Use APENAS o UUID retornado por list_appointments.',
+        parameters: {
+            type: 'object',
+            properties: {
+                appointment_id: { type: 'string', description: 'UUID real (ex: 942c9828...). NUNCA invente este ID.' },
+                reason: { type: 'string', description: 'Motivo curto' },
+                company_id: { type: 'string' }
+            },
+            required: ['appointment_id', 'company_id']
+        }
+    },
+    {
+        name: 'get_company_info',
+        description: 'Dados da empresa (serviços, preços, profissionais)',
+        parameters: {
+            type: 'object',
+            properties: {
+                company_id: { type: 'string' }
+            },
+            required: ['company_id']
+        }
+    },
+    {
+        name: 'get_client_info',
+        description: 'Verifica se o cliente já tem cadastro pelo telefone. Use SEMPRE no início da conversa.',
+        parameters: {
+            type: 'object',
+            properties: {
+                company_id: { type: 'string' }
+            },
+            required: ['company_id']
+        }
+    },
+    {
+        name: 'update_client_name',
+        description: 'Cadastra ou atualiza o nome do cliente no banco de dados. Use isso assim que o cliente novo informar o nome.',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'O nome completo informado pelo cliente' }
+            },
+            required: ['name']
+        }
+    }
+];
 
-        const data = response.data;
-        if (!data || !Array.isArray(data)) return [];
+/**
+ * Busca o histórico de conversas do banco de dados
+ */
+async function getHistory(clientPhone: string, companyId: string) {
+    console.log('🔍 [DB] Buscando histórico:', { clientPhone, companyId });
 
-        return data.map((m: any) => ({
-            role: m.role,
-            parts: [{ text: m.content }]
-        }));
-    } catch (error) {
-        console.error("❌ Erro ao carregar histórico do banco:", error);
+    try {
+        const { data, error } = await supabase
+            .from('conversations')
+            .select('messages')
+            .eq('client_phone', clientPhone)
+            .eq('company_id', companyId)
+            .maybeSingle();
+
+        if (error) {
+            console.log('⚠️ [DB] Erro ao buscar histórico (pode ser coluna inexistente):', error.message);
+            // Fallback para tentar ler da coluna 'history' se 'messages' falhar (migração pendente)
+            const { data: fallbackData } = await supabase
+                .from('conversations')
+                .select('history')
+                .eq('client_phone', clientPhone)
+                .eq('company_id', companyId)
+                .maybeSingle();
+
+            return fallbackData?.history || [];
+        }
+
+        const messages = data?.messages || [];
+        console.log(`📜 [DB] Histórico encontrado: ${messages.length} mensagens`);
+
+        return messages.slice(-50);
+    } catch (err: any) {
+        console.error('❌ [DB] Erro crítico no getHistory:', err.message);
         return [];
     }
-};
+}
 
-const salvarMensagemBanco = async (companyId: string, jid: string, role: string, content: string) => {
+export async function gerarRespostaIA(dados: any): Promise<string> {
+    const { companyId, phone, message, dadosExtraidos } = dados;
+    return await chat(message, companyId, phone, dadosExtraidos);
+}
+
+export async function chat(
+    message: string,
+    companyId: string,
+    clientPhone: string,
+    clientData?: any
+): Promise<string> {
     try {
-        await axios.post(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`,
-            {
-                company_id: companyId,
-                client_jid: jid,
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('🤖 NOVA CHAMADA DA IA');
+        console.log('📱 Cliente:', clientPhone);
+        console.log('🏢 Empresa:', companyId);
+        console.log('💬 Mensagem:', message);
+
+        // 1. Buscar histórico
+        const history = await getHistory(clientPhone, companyId);
+        console.log('📚 História tem', history.length, 'mensagens');
+
+        // 2. Buscar configurações
+        const [configResp, agenteResp, clientResp] = await Promise.all([
+            supabase.from('configuracoes').select('*').eq('company_id', companyId).maybeSingle(),
+            supabase.from('agente_config').select('nome_agente, prompt, ativo').eq('company_id', companyId).maybeSingle(),
+            supabase.from('clientes').select('nome').eq('telefone', clientPhone).eq('company_id', companyId).maybeSingle()
+        ]);
+
+        // 🛡️ TRAVA DE ATIVAÇÃO: Se o agente não estiver ativo, não responde
+        if (agenteResp.data?.ativo === false) {
+            console.log(`📴 [AI] Agente desativado para a empresa ${companyId}. Silenciando resposta.`);
+            return null as any; // Retornar null para indicar que não deve haver resposta
+        }
+
+        const configData = configResp.data;
+        const businessName = configData?.nome_estabelecimento || 'Nosso Estabelecimento';
+        const agentName = agenteResp.data?.nome_agente || 'Assistente';
+        const clientName = clientResp.data?.nome || null; // Alterado para null se não existir
+        const whatsappNumber = configData?.whatsapp_numero || 'Não informado';
+        const clientExists = !!clientResp.data; // Flag para facilitar o prompt
+
+        console.log(`📋 [INFO] Estabelecimento: ${businessName}`);
+        console.log(`🤖 [INFO] Agente: ${agentName}`);
+        console.log(`👤 [INFO] Cliente: ${clientName || 'Novo'} (${clientPhone})`);
+        console.log(`🏷️ [INFO] Status: ${clientExists ? 'Cadastrado' : 'Não Cadastrado'}`);
+
+        // Formatar horários para o prompt
+        const d = configData?.dias_abertura || {};
+        const businessHours = {
+            segunda: d.segunda === false ? 'FECHADO' : (configData?.horario_segunda || 'Não informado'),
+            terca: d.terca === false ? 'FECHADO' : (configData?.horario_terca || 'Não informado'),
+            quarta: d.quarta === false ? 'FECHADO' : (configData?.horario_quarta || 'Não informado'),
+            quinta: d.quinta === false ? 'FECHADO' : (configData?.horario_quinta || 'Não informado'),
+            sexta: d.sexta === false ? 'FECHADO' : (configData?.horario_sexta || 'Não informado'),
+            sabado: d.sabado === false ? 'FECHADO' : (configData?.horario_sabado || 'Não informado'),
+            domingo: d.domingo === false ? 'FECHADO' : (configData?.horario_domingo || 'Não informado')
+        };
+
+        const businessHoursStr = Object.entries(businessHours)
+            .map(([dia, hora]) => `- ${dia.charAt(0).toUpperCase() + dia.slice(1)}: ${hora}`)
+            .join('\n');
+
+        // Formatar endereço
+        const address = configData?.rua 
+            ? `${configData.rua}${configData.numero ? `, ${configData.numero}` : ''}${configData.cidade ? ` - ${configData.cidade}` : ''}`
+            : 'Endereço não informado';
+
+        // 3. Preparar contexto temporal PRECISO (São Paulo)
+        const now = new Date();
+        const brDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+
+        const formatter = (d: Date) => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const weekday = (d: Date) => d.toLocaleDateString('pt-BR', { weekday: 'long' });
+        const toISO = (d: Date) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const currentTime = brDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+        const todayStr = formatter(brDate);
+        const todayWeekday = weekday(brDate);
+        const todayISO = toISO(brDate);
+
+        const tomorrow = new Date(brDate);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = formatter(tomorrow);
+        const tomorrowWeekday = weekday(tomorrow);
+        const tomorrowISO = toISO(tomorrow);
+
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.0-flash',
+            tools: [{ functionDeclarations: tools }],
+            systemInstruction: `
+# IDENTIDADE E CONTEXTO
+Você é o assistente virtual de agendamentos da **${businessName}**.
+Seu nome é ${agentName} e você atende pelo WhatsApp de forma natural, simpática e eficiente.
+
+## INFORMAÇÕES DA EMPRESA
+ - **NOME**: ${businessName}
+ - **ID**: ${companyId}
+ - **ENDEREÇO**: ${address}
+ - **HORÁRIO DE FUNCIONAMENTO**:
+ ${businessHoursStr}
+
+## 👤 INFORMAÇÕES DO CLIENTE
+- **NOME**: ${clientName || 'Não identificado'}
+- **STATUS**: ${clientExists ? 'CLIENTE CADASTRADO' : 'CLIENTE NOVO'}
+- **TELEFONE**: ${clientPhone}
+
+## ⚠️ MULTI-TENANCY - REGRA CRÍTICA DE ISOLAMENTO
+**ATENÇÃO MÁXIMA**: Este é um sistema multi-empresas (multi-tenant).
+- Cada empresa tem seu próprio \`company_id\`: **${companyId}**
+- TODOS os dados desta conversa são da empresa: **${businessName}** (ID: ${companyId})
+- NUNCA acesse, mostre ou misture dados de outras empresas
+- TODAS as funções que você chamar DEVEM usar este company_id
+- Se houver qualquer dúvida sobre qual empresa está atendendo: PARE e verifique
+
+**Validação obrigatória**: Antes de cada resposta, confirme mentalmente:
+✅ Estou usando company_id: ${companyId}?
+✅ Os dados que vou mostrar são desta empresa?
+✅ O cliente pertence a esta empresa?
+
+## INFORMAÇÕES TEMPORAIS (Horário de Brasília)
+- **HOJE**: ${todayStr} (${todayWeekday})
+- **AMANHÃ**: ${tomorrowStr} (${tomorrowWeekday})
+- **HORA ATUAL**: ${currentTime}
+
+## FORMATO DE DATAS - PADRÃO BRASILEIRO
+**IMPORTANTE**: Use SEMPRE o formato brasileiro DD/MM/YYYY al falar com o cliente
+
+### Conversões Automáticas para o Cliente:
+- Cliente fala "hoje" → você responde "${todayStr}"
+- Cliente fala "amanhã" → você responde "${tomorrowStr}"
+- Cliente fala "próxima segunda" → calcule e responda "DD/MM/YYYY"
+- Cliente fala uma data "15/03" → complete o ano atual automaticamente
+
+### Conversão para Funções (Backend):
+Ao chamar funções, converta para ISO (YYYY-MM-DD):
+- ${todayStr} → ${todayISO}
+- ${tomorrowStr} → ${tomorrowISO}
+- 15/03/2026 → 2026-03-15
+
+**Exemplo de fluxo correto**:
+\`\`\`
+Cliente: "Quero agendar para amanhã"
+Você pensa: amanhã = ${tomorrowStr} = ${tomorrowISO} (ISO para função)
+Você fala: "Ótimo! Vou buscar horários para ${tomorrowStr} (${tomorrowWeekday})"
+Você chama: get_available_slots(date="${tomorrowISO}", company_id="${companyId}")
+\`\`\`
+
+---
+
+# 🎬 SEQUÊNCIA OBRIGATÓRIA E INTELIGENTE (ORDEM DISCIPLINADA)
+Você DEVE seguir estes passos rigorosamente, mas com inteligência. **REGRA DE OURO**: Se o cliente já informou um dado (ex: serviço, data ou profissional) na mensagem atual ou anterior, **NUNCA** pergunte novamente. Reconheça a informação, valide-a internamente e pule para o próximo dado faltante.
+
+1. **SAUDAÇÃO E CARREGAMENTO (Obrigatório)**:
+   - Se **CLIENTE CADASTRADO**: "Olá ${clientName}, que bom te ver novamente! Como posso te ajudar hoje?"
+   - Se **CLIENTE NOVO**: "Olá, meu nome é ${agentName}, sou da ${businessName}, tudo bem? Como posso te ajudar?"
+   - **REGRA CRÍTICA**: Na primeira mensagem, você **DEVE** chamar \`get_company_info\` para conhecer os serviços e profissionais.
+   - **VALIDAÇÃO DE SERVIÇOS (RESILIÊNCIA)**: Ao listar serviços, considere que nomes compostos ou combos são serviços ÚNICOS na tabela. 
+   - **PROIBIDO INVENTAR**: Use apenas os nomes que o \`get_company_info\` e \`get_available_slots\` retornarem. Se o cliente pedir múltiplos itens, verifique se existe um serviço que englobe ambos (combo) antes de tratar como serviços separados.
+   - **PREFERÊNCIA POR COMBOS**: Se houver um serviço único que atenda ao pedido (ex: um pacote ou combo), use este serviço.
+
+2. **IDENTIFICAÇÃO DE DADOS JÁ FORNECIDOS**:
+   - Se o cliente disse "quero [Serviço] para [Data]", você já tem: **Serviço** e **Data**.
+   - NÃO responda: "Vou precisar de umas informações. Qual serviço você quer?".
+   - RESPONDA: "Certo! Vou verificar os horários para [Serviço] em [Data]. Qual período você prefere?"
+
+3. **SERVIÇO**: Se não informado, pergunte. Se informado, valide se existe no \`get_company_info\`.
+4. **PROFISSIONAL**: Se o cliente não informou o profissional, pergunte qual ele prefere (mostre a lista de profissionais da empresa).
+5. **DATA**: Se não informada, pergunte. Se informado "hoje" ou "amanhã", converta para ISO.
+6. **PERÍODO E HORÁRIOS**: 
+   - Se o cliente não disse o horário, pergunte o período:
+     - 🌅 **Manhã**: 05:00 às 12:00
+     - ☀️ **Tarde**: 12:00 às 18:00
+     - 🌙 **Noite**: 18:00 às 23:59
+   - Use \`get_available_slots\` com a data, o profissional escolhido e o período.
+   - **REGRA DE OURO (APRESENTAÇÃO)**: Liste os horários um por um (ex: 12:00, 12:30, 13:00).
+   - **PROIBIDO AGRUPAR**: NUNCA mostre intervalos como "12:00 - 17:30". O cliente precisa ver cada opção individualmente para escolher.
+   - **LIMITE DE LISTA**: Se houver muitos horários (mais de 10), liste os primeiros 10 e pergunte se ele prefere algum desses ou se quer ver mais tarde.
+   - **SEMPRE INDIVIDUAL**: Cada linha deve ter apenas um horário. Exemplo correto:
+     - 14:00
+     - 14:30
+     - 15:00
+   - **NUNCA INVENTE HORÁRIOS**: Respeite rigorosamente a disponibilidade do profissional e da empresa.
+
+7. **CADASTRO (OBRIGATÓRIO PARA NOVOS)**:
+   - Se **CLIENTE NOVO**: Peça o nome dele ANTES de confirmar. Assim que ele der o nome, chame \`update_client_name\`.
+
+8. **RESUMO E EXECUÇÃO**: Mostre Serviço, Data, Hora, Profissional e Preço. Após o "Sim", chame \`create_appointment\`.
+
+# 🔔 RECONHECIMENTO DE FOLLOW-UP E RESPOSTAS CURTAS
+Se a última mensagem enviada pelo sistema foi um LEMBRETE ou AVISO de agendamento (Follow-up) e o cliente responder algo curto ou apenas uma confirmação (ex: "beleza", "ok", "opa blz", "confirmado", "obrigado"):
+- **NÃO REINICIE O FLUXO**: Não pergunte "Como posso te ajudar?" ou "Qual serviço deseja?".
+- **SEJA NATURAL**: Apenas confirme que recebeu o "ok" dele de forma simpática.
+- **EXEMPLO**: "Beleza, ${clientName}! Ficamos te esperando. Qualquer coisa é só chamar! 😉"
+- **FOCO**: O objetivo é apenas confirmar que o cliente viu o lembrete, sem forçar uma nova conversa.
+
+# 📋 REGRAS DE UX (USER EXPERIENCE)
+- **RESPOSTAS DIRETAS**: Se o cliente deu 2 informações, confirme as 2 e peça a 3ª.
+- **FLUXO CONTÍNUO**: Nunca diga "vou precisar de algumas informações" de forma genérica. Seja específico: "Vi que você quer [Serviço] para [Data]. Em qual horário?"
+- **VALIDAÇÃO SILENCIOSA**: Se o cliente pediu um serviço que existe, não pergunte "qual serviço?". Apenas siga.
+- **ZERO REDUNDÂNCIA**: Perguntar algo que o cliente acabou de escrever causa uma péssima impressão e parece um robô burro.
+- **FINALIZAÇÃO DE RESPOSTA**: Toda vez que você chamar uma ferramenta (como \`get_company_info\` ou \`get_available_slots\`), você **DEVE** gerar uma resposta de texto para o cliente logo em seguida, explicando o que encontrou ou fazendo a próxima pergunta do fluxo. NUNCA responda apenas com a chamada da ferramenta.
+
+---
+
+# 🔧 FERRAMENTAS DISPONÍVEIS
+
+## 🔍 get_company_info
+**Quando usar**: Sempre que precisar de dados da empresa atual
+**Retorna**: Lista de serviços, profissionais, preços, horários de funcionamento
+**Multi-tenancy**: Automático, já filtra por company_id internamente
+
+## 📅 get_available_slots
+**Quando usar**: Cliente menciona dia / período para agendar
+**Parâmetros**:
+- \`date\`: YYYY-MM-DD (formato ISO, converta do brasileiro)
+- \`service\`: Nome do serviço (opcional, mas recomendado)
+- \`professional\`: Nome do profissional (opcional)
+- \`period\`: "manha" | "tarde" | "noite" | "todos" (opcional)
+- \`company_id\`: ID da empresa atual (obrigatório)
+
+**Formato de Data**:
+- Cliente fala: "15/03/2026"
+- Você converte: "2026-03-15"
+- Você mostra resultado: "15/03/2026"
+
+**Comportamento esperado**:
+- **PASSO 1**: Identifique o serviço e o profissional.
+- **PASSO 2**: Identifique o dia.
+- **PASSO 3**: Pergunte o período (Manhã, Tarde ou Noite).
+- **PASSO 4**: Chame a função passando o profissional e o período para mostrar os horários específicos daquela pessoa.
+- Multi-tenancy: Automático, já filtra por company_id.
+
+## ✅ create_appointment
+**Quando usar**: APENAS após coletar TODOS os dados e receber CONFIRMAÇÃO
+**Regra de Ouro (COMBO/PACOTE)**: 
+- Se o cliente pedir múltiplos serviços, você **DEVE** enviar o texto exatamente como ele pediu no parâmetro \`service\` se houver um serviço correspondente. 
+- Exemplo: \`service: "[Nome do Combo]"\`. 
+- O sistema backend buscará o serviço correspondente. 
+- **PROIBIDO**: NUNCA tente agendar dois serviços separados (fazer duas chamadas de função ou agendar um e perguntar do outro).
+- Se o cliente pediu múltiplos serviços que formam um conjunto, a sua missão é fazer **UM ÚNICO** agendamento que englobe tudo.
+
+**Parâmetros obrigatórios**:
+- \`date\`: YYYY-MM-DD
+- \`time\`: HH:MM
+- \`service\`: Nome do serviço
+- \`professional\`: Nome do profissional
+- \`client_name\`: Nome do cliente
+- \`company_id\`: ID da empresa (ex: UUID)
+
+**Comportamento pós-agendamento**:
+- Assim que a função retornar \`success: true\`, você deve dar uma resposta FINAL e CLARA de confirmação.
+- **NUNCA** sugira novos horários ou continue o fluxo de agendamento se o retorno foi sucesso.
+- **PROIBIDO**: Se o cliente já agendou o que desejava, **NUNCA** pergunte se ele quer agendar algo mais. O atendimento para aquele pedido ACABOU.
+
+**Validações antes de chamar**:
+- Se o cliente pediu um conjunto de serviços, você chamou \`create_appointment\` para o serviço combo/pacote correspondente? 
+- **NUNCA** agende apenas uma parte e depois pergunte do resto se ele pediu tudo junto.
+- Todos os dados são da empresa ${companyId}?
+
+**Regras de Formatação**:
+- Datas em DD/MM/YYYY.
+- Horários em HH:MM.
+
+## 📋 list_appointments
+**Quando usar**: 
+- Cliente quer ver agendamentos.
+
+**Multi-tenancy**: Filtra por empresa.
+
+## ❌ cancel_appointment
+**Quando usar**: Cliente quer cancelar.
+
+**Parâmetros**:
+- \`appointment_id\`: UUID real.
+- \`company_id\`: ID da empresa.
+
+---
+
+# 🎬 FLUXOS DE ATENDIMENTO
+
+## 📌 NOVO AGENDAMENTO
+
+\`\`\` 
+Cliente: "Quero agendar"
+Você: "Qual serviço?"
+\`\`\` 
+
+## 🔄 REAGENDAMENTO
+
+\`\`\` 
+Cliente: "Quero reagendar"
+[Chama: list_appointments(company_id="${companyId}")]
+\`\`\` 
+
+## 🗑️ CANCELAMENTO
+\`\`\` 
+Cliente: "Quero cancelar"
+[Chama: list_appointments(company_id="${companyId}")]
+\`\`\` 
+
+## ❌ CANCELAMENTO
+
+\`\`\` 
+Cliente: "Quero cancelar"
+
+[Chama: list_appointments(company_id="${companyId}") - OBRIGATÓRIO]
+
+Cenário 1 - Um agendamento:
+Você: "Vi seu agendamento para [Data] às [Hora] ([Serviço] com [Profissional]). Confirma o cancelamento?"
+
+Cenário 2 - Múltiplos agendamentos:
+Você: "Você tem [X] agendamentos:
+1. [Data 1] às [Hora 1] - [Serviço 1] com [Profissional 1]
+2. [Data 2] às [Hora 2] - [Serviço 2] com [Profissional 2]
+
+Qual deseja cancelar? (responda 1 ou 2)"
+
+[Após confirmação, chama cancel_appointment with UUID correto e company_id="${companyId}"]
+
+Você: "Agendamento cancelado com sucesso!"
+\`\`\`
+
+---
+
+# ⚠️ TRATAMENTO DE ERROS
+
+## 🚫 Horário Impossível
+Cliente: "Quero às 23h"
+Você: "Desculpe, não atendemos às 23h. Nosso horário é de [Início] às [Fim]. Qual horário prefere dentro desse período?"
+
+## 🚫 Dia Fechado
+Cliente: "Quero domingo"
+Você: "Não abrimos aos domingos. Trabalhamos de [Dias de Abertura]. Qual outro dia serve?"
+
+## 🚫 Sem Horário Disponível
+Cliente: "Quero para [Data]"
+[Chama função, não retorna horários]
+Você: "Infelizmente não temos horários disponíveis para [Data]. 
+Os próximos dias com disponibilidade são:
+- [Data Próxima 1] ([Dia]): [Horários]
+- [Data Próxima 2] ([Dia]): [Horários]
+
+Qual prefere?"
+
+## 🚫 Data Fora do Formato
+Cliente: "Quero para março dia 15"
+Você interpreta: 15/03/[Ano Atual] → converte para [Ano]-03-15 na função
+Você responde: "Certo! Vou buscar horários para 15/03/[Ano Atual]..."
+
+---
+
+# 💬 TOM E ESTILO
+
+## ✅ FAÇA:
+- Seja natural e conversacional (estilo WhatsApp)
+- Use emojis com moderação (1-2 por mensagem)
+- Seja proativo e antecipe necessidades
+- Respostas curtas (2-4 lines máximo)
+- **Sempre mostre datas em formato brasileiro: DD/MM/YYYY**
+- Use dia da semana quando relevante: "[Data] (segunda-feira)"
+
+## ❌ NÃO FAÇA:
+- Usar formato americano (MM/DD/YYYY) ou ISO (YYYY-MM-DD) ao falar com cliente
+- Usar markdown, negritos (**), ou formatação especial
+- Respostas longas e burocráticas
+- Perguntar informações que já tem
+- Criar agendamento sem confirmação
+- **Misturar dados de empresas diferentes**
+- Inventar UUIDs ou dados
+
+---
+
+# 🔒 SEGURANÇA MULTI-TENANCY - CHECKLIST FINAL
+
+Antes de CADA operação, confirme:
+
+✅ **Company ID correto?** Estou usando ${companyId}?
+✅ **Dados isolados?** Esta busca está filtrada por company_id?
+✅ **Cliente certo?** Telefone ${clientPhone} + company_id ${companyId}?
+✅ **Formato de data?** Cliente vê DD/MM/YYYY, função recebe YYYY-MM-DD?
+✅ **Confirmação?** (para agendamentos) Cliente confirmou explicitamente?
+
+**Se houver QUALQUER dúvida sobre qual empresa está sendo atendida, PARE imediatamente e reporte o erro.**
+
+---
+
+# 📝 RESUMO EXECUTIVO
+
+**Você está atendendo**:
+- Empresa: ${businessName}
+- ID: ${companyId}
+- Cliente: ${clientPhone}
+
+**Lembre-se sempre**:
+1. **Multi-tenancy é CRÍTICO** - nunca misture empresas
+2. **Datas em português** - DD/MM/YYYY para o cliente, YYYY-MM-DD para funções
+3. **Confirme antes de agendar** - sempre mostre resumo
+4. **Seja eficiente** - não pergunte o que já sabe
+5. **Valide tudo** - horários, disponibilidade, dados da empresa
+
+Você está aqui para facilitar a vida do cliente da **${businessName}**, com segurança e eficiência! 🚀
+`
+        });
+        // Preservamos o formato original do Gemini que agora estamos salvando no banco
+        let geminiHistory = history.map((h: any) => {
+            let role = h.role === 'assistant' ? 'model' : h.role;
+
+            // ⭐ SEGURANÇA EXTRA: Se houver functionResponse, papel TEM que ser 'function'
+            const hasFunctionResponse = h.parts?.some((p: any) => p.functionResponse);
+
+            if (hasFunctionResponse) {
+                role = 'function';
+            } else if (!role || (role !== 'user' && role !== 'model' && role !== 'function')) {
+                role = 'user';
+            }
+
+            return {
                 role: role,
-                content: content
-            },
-            {
-                headers: {
-                    'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                    'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
-                    'Content-Type': 'application/json',
-                    'Prefer': 'return=minimal'
-                }
-            }
-        );
-    } catch (error) {
-        console.error("❌ Erro ao salvar mensagem no banco:", error);
-    }
-};
-
-const excluirHistoricoBanco = async (companyId: string, jid: string) => {
-    try {
-        await axios.delete(`${process.env.SUPABASE_URL}/rest/v1/ai_chat_history`, {
-            params: {
-                company_id: `eq.${companyId}`,
-                client_jid: `eq.${jid}`
-            },
-            headers: {
-                'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`
-            }
-        });
-    } catch (error) {
-        console.error("❌ Erro ao excluir histórico do banco:", error);
-    }
-};
-
-export const gerarRespostaIA = async (dados: any) => {
-    try {
-        const memKey = `${dados.companyId}_${dados.jid}`;
-
-        // 1️⃣ CARREGAR HISTÓRICO (BANCO + FALLBACK MEMÓRIA)
-        let historico = await carregarHistoricoBanco(dados.companyId, dados.jid);
-
-        if (historico.length === 0 && chatsMemoria[memKey]) {
-            historico = chatsMemoria[memKey];
-        }
-
-        console.log(`\n[IA] Gerando resposta - Tipo: ${dados.tipoConversa || 'agendar'}`);
-        console.log(`   Histórico carregado: ${historico.length} mensagens`);
-
-        // ✅ CORREÇÃO (Fluxo 5): Datas Dinâmicas (Ajustado para America/Sao_Paulo)
-        const agoraServidor = new Date();
-        const formatterLong = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long' });
-        const formatterShort = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' });
-        
-        const hojeLocal = new Date(agoraServidor.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
-        const amanhaLocal = new Date(hojeLocal);
-        amanhaLocal.setDate(hojeLocal.getDate() + 1);
-        
-        const diaSemanaHoje = formatterLong.format(hojeLocal);
-        const dataHojeStr = formatterShort.format(hojeLocal);
-        const diaSemanaAmanha = formatterLong.format(amanhaLocal);
-        const dataAmanhaStr = formatterShort.format(amanhaLocal);
-
-        // Aumentar histórico para 20 mensagens
-        if (historico.length > 20) {
-            console.log(`   ✂️ Limitando histórico (Last 20 messages)`);
-            historico = historico.slice(-20);
-        }
-
-        // 💾 SALVAR MENSAGEM DO CLIENTE IMEDIATAMENTE (Se não for repetida)
-        if (dados.mensagem) {
-            await salvarMensagemBanco(dados.companyId, dados.jid, 'user', dados.mensagem);
-            // Adicionar ao histórico local para o prompt atual
-            historico.push({ role: 'user', parts: [{ text: dados.mensagem }] });
-        }
-
-        const dadosExtraidos = dados.dadosExtraidos || {};
-        let validacoes = dadosExtraidos.validacoes || {}; // Usar 'let' para poder reatribuir
-
-        // --- VALIDAÇÃO INICIAL DE DIA ABERTO (CRÍTICO) ---
-        // Sempre carregar configurações da empresa para ter os horários de funcionamento
-        if (!dadosExtraidos.configuracoes) {
-            const { db } = await import('./supabase.js');
-            const config = await db.getConfiguracao(dados.companyId);
-            if (config) {
-                console.log(`   ✅ [IA] Configurações carregadas para o prompt (Empresa: ${config.nome_estabelecimento || dados.nomeLoja})`);
-                dadosExtraidos.configuracoes = config;
-            } else {
-                console.warn(`   ⚠️ [IA] Falha ao carregar configurações para empresa ${dados.companyId}`);
-            }
-        }
-
-        if (dadosExtraidos.data && !validacoes.diaAbertoCalculado) { // Adiciona flag para não recalcular
-            const resultadoDiaAberto = await validarDiaAberto(dados.companyId, dadosExtraidos.data);
-
-            validacoes = {
-                ...validacoes,
-                diaAberto: resultadoDiaAberto.aberto,
-                motivoErro: resultadoDiaAberto.motivo,
-                diaAbertoCalculado: true // Marca que já foi validado
+                parts: h.parts || [{ text: h.content || '' }]
             };
-
-            // SE O DIA ESTIVER FECHADO, ZERAR QUALQUER SUGESTÃO DE HORÁRIOS
-            if (!resultadoDiaAberto.aberto) {
-                dadosExtraidos.horariosDisponiveis = [];
-                dadosExtraidos.periodosDisponiveis = [];
-                dadosExtraidos.horariosPorPeriodo = {};
-                dadosExtraidos.erro_fluxo = "DIA_FECHADO"; // Garante que a instrucaoPrioritaria seja ativada
-            }
-        }
-        // --- FIM DA VALIDAÇÃO INICIAL DE DIA ABERTO ---
-
-        const regraSolo = dados.eSolo
-            ? `Voce atende com um UNICO profissional: ${dados.profissionaisLista}. NUNCA sugira outros.`
-            : `Voce atende com uma EQUIPE: ${dados.profissionaisLista}. Sempre ofereca TODOS os profissionais disponiveis.`;
-
-        const listaServicos = dados.servicos
-            ? dados.servicos.map((s: any) => `- ${s}`).join('\n')
-            : 'Servicos nao especificados';
-
-        // ✅ HORÁRIOS DE FUNCIONAMENTO (DINÂMICO PARA MULTITENANCY)
-        let horariosFuncionamento = `\n🕒 HORÁRIOS DE ATENDIMENTO (${dados.nomeLoja}):\n`;
-        
-        if (dadosExtraidos.configuracoes) {
-            const config = dadosExtraidos.configuracoes;
-            const nomesDias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
-            const camposDias = ['horario_segunda', 'horario_terca', 'horario_quarta', 'horario_quinta', 'horario_sexta', 'horario_sabado', 'horario_domingo'];
-            const diasAbertura = config.dias_abertura || {};
-
-            camposDias.forEach((campo, index) => {
-                const diaNome = nomesDias[index];
-                const diaSlug = campo.replace('horario_', '');
-                
-                // Se o JSON dias_abertura diz que tá fechado, ou o campo de texto é FECHADO/vazio
-                const fechadoPeloJson = diasAbertura[diaSlug] === false;
-                const horarioTexto = config[campo];
-                const fechadoPeloTexto = !horarioTexto || horarioTexto === 'FECHADO' || horarioTexto.trim() === '';
-
-                if (fechadoPeloJson || fechadoPeloTexto) {
-                    horariosFuncionamento += `- ${diaNome}: FECHADO\n`;
-                } else {
-                    horariosFuncionamento += `- ${diaNome}: ${horarioTexto}\n`;
-                }
-            });
-
-            horariosFuncionamento += `\n⚠️ IMPORTANTE (REGRAS DE OURO):\n`;
-            horariosFuncionamento += `1. SEMPRE use os horários da lista acima para responder sobre funcionamento.\n`;
-            horariosFuncionamento += `2. Se o dia constar como FECHADO, diga explicitamente que não abrimos nesse dia.\n`;
-            horariosFuncionamento += `3. Se o cliente perguntar "que horas vocês abrem amanhã", verifique qual dia da semana é amanhã na lista acima e responda o horário EXATO.\n`;
-            horariosFuncionamento += `4. JAMAIS invente horários genéricos como "08:00 às 18:00" se a lista acima disser algo diferente.\n`;
-            
-            // ✅ Adição: Mapeamento explícito de HOJE para facilitar a vida da IA
-            const diasSemanaMap: Record<string, string> = {
-                'segunda-feira': 'segunda', 'terça-feira': 'terca', 'quarta-feira': 'quarta', 
-                'quinta-feira': 'quinta', 'sexta-feira': 'sexta', 'sábado': 'sabado', 'domingo': 'domingo'
-            };
-            const hojeSlug = diasSemanaMap[diaSemanaHoje.toLowerCase()] || '';
-            if (hojeSlug) {
-                const horarioHoje = config[`horario_${hojeSlug}`];
-                const abertoHoje = config.dias_abertura?.[hojeSlug] !== false;
-                horariosFuncionamento += `\n📌 HOJE (${diaSemanaHoje}): ${abertoHoje && horarioHoje && horarioHoje !== 'FECHADO' ? horarioHoje : 'FECHADO'}\n`;
-            }
-        } else {
-            horariosFuncionamento += `Horários não configurados. Por favor, consulte o estabelecimento.\n`;
-        }
-
-        // ✅ ETAPA 1: CORRIGIDO - Mostra horários e períodos disponíveis!
-        let resumoDadosExtraidos = '';
-        if (dadosExtraidos.servico || dadosExtraidos.data || dadosExtraidos.hora) {
-            resumoDadosExtraidos = `\n📋 DADOS JA INFORMADOS PELO CLIENTE:\n`;
-            if (dadosExtraidos.servico) resumoDadosExtraidos += `✅ Servico: ${dadosExtraidos.servico}\n`;
-
-            // Adicionar horários reais ao resumo para a IA ver
-            if (horariosFuncionamento) {
-                resumoDadosExtraidos += horariosFuncionamento;
-            }
-
-            // ✅ ETAPA 1: Formata data corretamente
-            if (dadosExtraidos.data) {
-                const [ano, mes, dia] = dadosExtraidos.data.split('-');
-                const dataFormatada = `${dia}/${mes}/${ano}`;
-                resumoDadosExtraidos += `✅ DATA DEFINIDA: ${dataFormatada} (${dadosExtraidos.data})\n`;
-                resumoDadosExtraidos += `⚠️ IMPORTANTE: Use EXATAMENTE a data ${dataFormatada} para buscar horários. NÃO recalcule "amanhã" se a data já está definida aqui.\n`;
-            } else {
-                resumoDadosExtraidos += `❓ Data: Não informada\n`;
-            }
-
-            if (dadosExtraidos.periodo) resumoDadosExtraidos += `✅ Periodo: ${dadosExtraidos.periodo}\n`;
-            if (dadosExtraidos.hora) resumoDadosExtraidos += `✅ Horario: ${dadosExtraidos.hora}\n`;
-            if (dadosExtraidos.profissional) resumoDadosExtraidos += `✅ Profissional: ${dadosExtraidos.profissional}\n`;
-            if (dadosExtraidos.nome) resumoDadosExtraidos += `✅ Nome: ${dadosExtraidos.nome}\n`;
-
-            if (dadosExtraidos.puloParaAmanha && dadosExtraidos.data) {
-                const [anoP, mesP, diaP] = dadosExtraidos.data.split('-');
-                const dataPulo = `${diaP}/${mesP}/${anoP}`;
-                resumoDadosExtraidos += `\n⚠️ AVISO SISTEMA: O dia original estava esgotado. A data foi ajustada automaticamente para AMANHÃ (${dataPulo}). Avise o cliente.\n`;
-            }
-
-            resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
-
-            // 🚫 BLOQUEIO DE DIA FECHADO (Solicitado)
-            if (dadosExtraidos.data && validacoes && validacoes.diaAberto === false) {
-                // CRÍTICO: Informar CLARAMENTE que está fechado 
-                resumoDadosExtraidos += `\n🚫 DIA FECHADO!\n`; 
-                resumoDadosExtraidos += `❌ Estabelecimento FECHADO em ${dadosExtraidos.data}\n`; 
-                resumoDadosExtraidos += `Motivo: ${validacoes.motivoErro || 'Dia de folga'}\n`; 
-                resumoDadosExtraidos += `\n⚠️ RESPOSTA OBRIGATÓRIA:\n`; 
-                resumoDadosExtraidos += `"Infelizmente estamos fechados neste dia. Posso agendar para [próximo dia aberto]?"\n`; 
-                resumoDadosExtraidos += `\n❌ NUNCA DIGA:\n`; 
-                resumoDadosExtraidos += `- "não tenho horários"\n`; 
-                resumoDadosExtraidos += `- "já estão reservados"\n`; 
-                resumoDadosExtraidos += `- "horários esgotados"\n`; 
-                resumoDadosExtraidos += `\n✅ SEMPRE EXPLIQUE: Está fechado neste dia!\n`; 
-                
-                // Limpar horários para forçar IA a não listar 
-                dadosExtraidos.horariosDisponiveis = []; 
-                dadosExtraidos.periodosDisponiveis = []; 
-                dadosExtraidos.horariosPorPeriodo = {}; // Certificar que este também é limpo
-            }
-
-            // APENAS LISTAR HORÁRIOS SE O DIA ESTIVER ABERTO
-            if (validacoes.diaAberto && dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 0) {
-                resumoDadosExtraidos += `\n🕐 HORÁRIOS DISPONÍVEIS ${dadosExtraidos.periodo ? `(${dadosExtraidos.periodo})` : ''}:\n`;
-
-                // Se temos estrutura detalhada por período, usa ela (Melhor UX)
-                if (dadosExtraidos.horariosPorPeriodo) {
-                    const hp = dadosExtraidos.horariosPorPeriodo;
-                    const temManha = hp.manha && hp.manha.length > 0;
-                    const temTarde = hp.tarde && hp.tarde.length > 0;
-                    const temNoite = hp.noite && hp.noite.length > 0;
-
-                    if (temManha || temTarde || temNoite) {
-                        resumoDadosExtraidos += `\nPAINEL DE HORÁRIOS (Use para sugerir):\n`;
-                        if (temManha) resumoDadosExtraidos += `🌅 MANHÃ (06h-12h): ${hp.manha.join(', ')}\n`;
-                        if (temTarde) resumoDadosExtraidos += `☀️ TARDE (12h-18h): ${hp.tarde.join(', ')}\n`;
-                        if (temNoite) resumoDadosExtraidos += `🌙 NOITE (18h-23h): ${hp.noite.join(', ')}\n`;
-                        resumoDadosExtraidos += `\n⚠️ IMPORTANTE: Sempre pergunte qual PERÍODO o cliente prefere antes de listar tudo!\n`;
-                    } else {
-                        // Fallback se estrutura vier vazia mas horariosDisponiveis tiver dados
-                        const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 10);
-                        resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 10 ? '...' : '') + '\n';
-                    }
-                } else {
-                    // Fallback antigo
-                    const mostrar = dadosExtraidos.horariosDisponiveis.slice(0, 8);
-                    resumoDadosExtraidos += mostrar.join(', ') + (dadosExtraidos.horariosDisponiveis.length > 8 ? '...' : '') + '\n';
-                }
-            } else if (dadosExtraidos.data && dadosExtraidos.profissional) {
-                if (dadosExtraidos.periodosDisponiveis && dadosExtraidos.periodosDisponiveis.length > 0) {
-                    resumoDadosExtraidos += `\n✅ PERÍODOS COM VAGA: ${dadosExtraidos.periodosDisponiveis.join(', ')}\n`;
-                    resumoDadosExtraidos += `⚠️ Sugira estes períodos ao cliente!\n`;
-                } else {
-                    resumoDadosExtraidos += `\n❌ NENHUM HORÁRIO DISPONÍVEL para este dia!\n`;
-                }
-            }
-
-            // (Lógica de puloParaAmanha movida para dentro do bloco de data acima)
-
-            resumoDadosExtraidos += `\n⚠️ NAO PERGUNTE NOVAMENTE sobre dados ja informados!\n`;
-        }
-
-        // INFORMAÇÕES DE VALIDAÇÃO
-        let infoValidacao = '';
-
-        if (dadosExtraidos.hora && !validacoes.horarioValido) {
-            infoValidacao += `\n🚫 HORÁRIO ${dadosExtraidos.hora} OCUPADO OU FORA DO FUNCIONAMENTO!\n`;
-
-            if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length > 0) {
-                infoValidacao += `\n💡 HORÁRIOS PRÓXIMOS DISPONÍVEIS:\n`;
-                infoValidacao += validacoes.sugestoesHorarios.map((h: string) => `- ${h}`).join('\n');
-                infoValidacao += `\n`;
-            }
-
-            if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
-                infoValidacao += `\n👥 OUTROS PROFISSIONAIS DISPONÍVEIS:\n`;
-                for (const prof of validacoes.sugestoesProfissionais) {
-                    if (prof.horarios && prof.horarios.length > 0) {
-                        infoValidacao += `\n${prof.profissional}:\n`;
-                        infoValidacao += prof.horarios.map((h: string) => `  - ${h}`).join('\n');
-                        infoValidacao += `\n`;
-                    }
-                }
-            }
-
-            infoValidacao += `\n⚠️ CRÍTICO - LEIA COM ATENÇÃO:\n`;
-            infoValidacao += `\n❌ O HORÁRIO ${dadosExtraidos.hora} NÃO PODE SER AGENDADO!\n`;
-            infoValidacao += `\n✅ VOCÊ DEVE:\n`;
-            infoValidacao += `1. NÃO perguntar "Posso confirmar?" - o horário está INDISPONÍVEL!\n`;
-            infoValidacao += `2. INFORMAR IMEDIATAMENTE que o horário não está disponível\n`;
-            infoValidacao += `3. OFERECER as alternativas acima de forma natural e amigável\n`;
-            infoValidacao += `\n📝 EXEMPLO DE RESPOSTA CORRETA:\n`;
-            infoValidacao += `"O horário ${dadosExtraidos.hora}${dadosExtraidos.profissional ? ' com ' + dadosExtraidos.profissional : ''} não tá disponível. `;
-
-            if (validacoes.sugestoesHorarios && validacoes.sugestoesHorarios.length >= 3) {
-                infoValidacao += `Mas tenho ${validacoes.sugestoesHorarios[0]}, ${validacoes.sugestoesHorarios[1]} ou ${validacoes.sugestoesHorarios[2]}. Qual prefere?"\n`;
-            } else if (validacoes.sugestoesProfissionais && validacoes.sugestoesProfissionais.length > 0) {
-                infoValidacao += `Mas tenho outros profissionais disponíveis. Quer ver as opções?"\n`;
-            } else {
-                infoValidacao += `Infelizmente não temos outros horários disponíveis para esse dia. Quer tentar outro dia?"\n`;
-            }
-
-            infoValidacao += `\n❌ NUNCA FAÇA ISSO:\n`;
-            infoValidacao += `- "Perfeito! Confirmando: ... Posso confirmar?" (ERRADO - horário indisponível!)\n`;
-            infoValidacao += `- Pedir confirmação quando o horário está ocupado\n`;
-            infoValidacao += `- Fingir que o horário está disponível\n`;
-            infoValidacao += `\n`;
-        }
-
-        if (dadosExtraidos.hora && validacoes.horarioValido) {
-            infoValidacao += `\n✅ HORÁRIO ${dadosExtraidos.hora} DISPONÍVEL!\n`;
-            infoValidacao += `Pode prosseguir com o agendamento normalmente.\n`;
-        }
-
-        if (dadosExtraidos.data && !validacoes.diaAberto && validacoes.motivoErro) {
-            infoValidacao += `\n🚫 DIA FECHADO!\n`;
-            infoValidacao += `\n⚠️ CRÍTICO:\n`;
-            infoValidacao += `O estabelecimento está FECHADO neste dia!\n`;
-            infoValidacao += `Motivo: ${validacoes.motivoErro}\n`;
-            infoValidacao += `\n✅ VOCÊ DEVE:\n`;
-            infoValidacao += `1. Informar que está fechado\n`;
-            infoValidacao += `2. Sugerir outro dia\n`;
-            infoValidacao += `3. NÃO tentar agendar para este dia\n`;
-            infoValidacao += `\n`;
-        }
-
-        if (validacoes.horarioPassado) {
-            infoValidacao += `\n⏰ HORÁRIO PASSADO! ${validacoes.motivoErro}\n`;
-            infoValidacao += `\n🔄 RESET: Esqueça ${dadosExtraidos.hora}. Se cliente perguntar horários, LISTE os válidos.\n`;
-            infoValidacao += `❌ NUNCA repita mesma mensagem de erro!\n`;
-
-            if (validacoes.sugestoesHorarios?.length > 0) {
-                infoValidacao += `Responda: "Para hoje tenho: ${validacoes.sugestoesHorarios.join(', ')}"\n`;
-            }
-
-            dadosExtraidos.hora = undefined; // Limpa hora inválida
-        }
-
-        if (validacoes.periodosDisponiveis && validacoes.periodosDisponiveis.length > 0) {
-            infoValidacao += `\n⏰ PERÍODOS DISPONÍVEIS:\n`;
-            infoValidacao += validacoes.periodosDisponiveis.map((p: string) => `- ${p}`).join('\n');
-            infoValidacao += `\n`;
-            infoValidacao += `Pergunte ao cliente qual período prefere.\n`;
-        }
-
-        let contextoCliente = '';
-        let instrucoesPorTipo = '';
-
-        if (dados.clienteExiste) {
-            contextoCliente = `👤 Cliente REGISTRADO: ${dados.clienteNome}\n⚠️ NAO peca nome, voce ja tem!\n✅ Use o nome do cliente nas respostas de forma natural.`;
-
-            switch (dados.tipoConversa) {
-                case 'agendar':
-                    instrucoesPorTipo = `
-📋 FLUXO: AGENDAR (Cliente Existente)
-
-1️⃣ SAUDAÇÃO INICIAL:
-   ${dadosExtraidos.servico || dadosExtraidos.data ?
-                            `⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ✅ Comece com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Com certeza posso te ajudar com isso!"\n   ✅ Depois, prossiga para o próximo passo!` :
-                            `✅ Se primeira mensagem: "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"`}
-
-2️⃣ COLETAR SERVIÇO:
-   ${dadosExtraidos.servico ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Qual serviço você quer agendar?"'}
-
-3️⃣ COLETAR DATA:
-   ${dadosExtraidos.data ? '✅ JÁ TEM - pule esta etapa' : '❌ Pergunte: "Para qual dia?"'}
-
-4️⃣ COLETAR PROFISSIONAL (se múltiplos):
-   ${dados.eSolo ?
-                            '⚠️ Só tem 1 profissional - pule esta etapa' :
-                            dadosExtraidos.profissional ?
-                                '✅ JÁ TEM - pule esta etapa' :
-                                `❌ Pergunte: "Com quem prefere? Temos: ${dados.profissionaisLista}"`}
-
-5️⃣ COLETAR PERÍODO E HORÁRIO (RÍGIDO):
-
-${!dadosExtraidos.periodo ? `
-⚠️ PERÍODO NÃO DEFINIDO!
-
-VOCÊ DEVE:
-1. NÃO listar horários ainda
-2. Perguntar: "Prefere manhã, tarde ou noite?" (Se for hoje, sugira APENAS os períodos que ainda possuem horários disponíveis)
-3. AGUARDAR resposta do cliente
-
-HORÁRIOS DISPONÍVEIS POR PERÍODO:
-${dadosExtraidos.horariosPorPeriodo ? `
-- Manhã: ${dadosExtraidos.horariosPorPeriodo.manha?.length || 0} horários
-- Tarde: ${dadosExtraidos.horariosPorPeriodo.tarde?.length || 0} horários
-- Noite: ${dadosExtraidos.horariosPorPeriodo.noite?.length || 0} horários
-` : 'Não disponível'}
-
-❌ NUNCA faça:
-- Listar todos os horários sem saber período
-- Perguntar horário específico sem período
-` : `
-✅ PERÍODO DEFINIDO: ${dadosExtraidos.periodo}
-
-AGORA SIM! Liste os horários de ${dadosExtraidos.periodo}:
-${dadosExtraidos.horariosDisponiveis?.join(', ')}
-
-Formato: "Para a ${dadosExtraidos.periodo} tenho: [horários]. Qual prefere?"
-`}
-
-6️⃣ CONFIRMAR (APENAS SE TUDO VÁLIDO - ✅ CORRIGIDO):
-   ⚠️ ATENÇÃO CRÍTICA: Só peça confirmação se:
-   - Tem serviço ✅
-   - Tem data ✅
-   - Tem hora VÁLIDA E DISPONÍVEL ✅
-   - Tem profissional ✅
-   
-   ❌ Se QUALQUER validação falhou:
-   → NÃO peça confirmação
-   → OFEREÇA alternativas imediatamente
-   → Veja seção VALIDAÇÃO acima
-   
-   ✅ Se TUDO válido:
-   - Faça resumo: "Perfeito! Confirmando:\n- [SERVICO]\n- [DD/MM/YYYY] às [HORA]\n- Com [PROF]\n\nPosso confirmar?"
-   - Aguarde "sim" or similar
-
-7️⃣ FINALIZAR:
-   - Quando cliente confirmar: use a ferramenta 'confirmar_agendamento'
-   - NÃO faça confirmação só em texto!`;
-                    break;
-
-                case 'consultar':
-                    instrucoesPorTipo = `
-📋 FLUXO: CONSULTAR
-⚠️ REGRA CRÍTICA: NÃO peça nome nem data! Você já tem os dados no contexto.
-1. Filtre os agendamentos abaixo pela data que o cliente pediu (se ele pediu uma):
-   Data pedida: ${dadosExtraidos.data || 'Não especificada'}
-2. Responda IMEDIATAMENTE: ${dados.temAgendamentos ?
-                            `"Oi ${dados.clienteNome}! Vi aqui que você tem:\n${dados.agendamentosProximos.map((a: any) => `- ${a.descricao}`).join('\n')}"` :
-                            `"Oi ${dados.clienteNome}! Verifiquei aqui e você não tem agendamentos marcados. Gostaria de agendar?"`}
-3. Se houver muitos agendamentos e o cliente pediu um específico, foque nele.`;
-                    break;
-
-                case 'cancelar':
-                    instrucoesPorTipo = `
-📋 FLUXO: CANCELAR
-1. Identifique qual agendamento cancelar. Você tem os IDs na seção 'AGENDAMENTOS EXISTENTES'.
-2. Se houver múltiplos no mesmo dia (como visto na lista), liste todos claramente com horário e peça para o cliente confirmar qual deles deseja desmarcar.
-3. JAMAIS diga que cancelou sem usar a ferramenta 'cancelar_agendamento' e receber 'sucesso'.
-4. Após o cliente confirmar qual ID, use 'cancelar_agendamento' com o agendamentoId correto.`;
-                    break;
-
-                case 'remarcar':
-                    instrucoesPorTipo = `
-📋 FLUXO: REMARCAR
-1. Identifique o agendamento antigo (o que o cliente quer mudar) e o NOVO HORÁRIO.
-2. 🚫 RÍGIDO: SE o cliente disser qual horário quer mudar (ex: "muda o das 11:00"), procure na lista 'AGENDAMENTOS EXISTENTES', pegue o ID e use-o automaticamente. JAMAIS pergunte o ID.
-3. Se houver múltiplos agendamentos e ele não especificou qual mudar, liste os horários dele e pergunte "Qual desses você quer mudar?".
-4. Com ID e Novo Horário em mãos -> USE 'remarcar_agendamento'.
-5. REGRA DE OURO: O horário que o cliente JÁ TEM é dele (não conflita com ele mesmo).`;
-                    break;
-
-                case 'confirmacao':
-                    instrucoesPorTipo = `
-📋 FLUXO: CONFIRMAÇÃO
-Cliente disse "sim"/"ok"/"confirma"
-→ Use IMEDIATAMENTE 'confirmar_agendamento' com os dados anteriores`;
-                    break;
-
-                default:
-                    instrucoesPorTipo = `Seja prestativo e natural com ${dados.clienteNome}!`;
-            }
-        } else {
-            // ✅ CLIENTE NOVO
-            contextoCliente = `👤 Cliente NOVO - não está cadastrado\n⚠️ Você DEVE pedir o nome ANTES DE CONFIRMAR (não no início!)`;
-
-            switch (dados.tipoConversa) {
-                case 'agendar':
-                    instrucoesPorTipo = `
-📋 FLUXO: AGENDAR (Cliente Novo)
-
-1️⃣ SAUDAÇÃO INICIAL:
-   ${dadosExtraidos.servico || dadosExtraidos.data ?
-                            `⚠️ Cliente JÁ DISSE o que quer (serviço/data)!\n   ✅ Comece com: "Olá, tudo bem? Sou ${dados.nomeAgente} da ${dados.nomeLoja}. Com certeza posso te ajudar com isso!"\n   ✅ Depois, prossiga para o próximo passo!` :
-                            `✅ Se primeira mensagem: "Olá, tudo bem? Sou ${dados.nomeAgente} aqui da ${dados.nomeLoja}! Como posso te ajudar hoje?"`}
-
-2️⃣ ORDEM DE COLETA (OBRIGATÓRIA):
-   Siga EXATAMENTE esta ordem. Não pule etapas nem peça dados adiantados.
-   
-   1. SERVIÇO: ${dadosExtraidos.servico ? '✅ Já temos' : '❌ Peça: "Qual serviço você deseja realizar?"'}
-   2. PROFISSIONAL: ${dados.eSolo ? '✅ Só tem 1 profissional (Solo)' : (dadosExtraidos.profissional ? '✅ Já temos' : '❌ Peça: "Com qual profissional deseja agendar? Temos: ' + dados.profissionaisLista + '"')}
-   3. DATA: ${dadosExtraidos.data ? '✅ Já temos' : '❌ Peça: "Para qual dia?"'}
-   4. PERÍODO: ${dadosExtraidos.periodo ? '✅ Já temos' : (dadosExtraidos.horariosDisponiveis && dadosExtraidos.horariosDisponiveis.length > 10 ? '❌ Peça: "Prefere manhã, tarde ou noite?"' : '✅ Poucos horários, pode listar direto')}
-   5. HORÁRIO: ${dadosExtraidos.hora ? '✅ Já temos' : '❌ Liste os horários disponíveis e peça para escolher um.'}
-   6. NOME: ${dadosExtraidos.nome ? '✅ Já temos' : '❌ Peça: "Por último, qual o seu nome?"'}
-
-⚠️ REGRAS CRÍTICAS:
-- OBRIGAR PERGUNTA DE PERÍODO: Se houver mais de 10 horários disponíveis para o dia, você DEVE perguntar o período (manhã, tarde ou noite) antes de listar os horários.
-- CONFIRMAR DATAS AMBÍGUAS: Se o cliente disser apenas o dia da semana (ex: "sexta"), confirme a data completa no formato DD/MM. Ex: "Para esta sexta-feira, dia 15/05, certo?"
-- NÃO RE-PERGUNTAR NOME: Verifique no histórico se o cliente já se apresentou (ex: "Oi, sou o Carlos"). Se o nome já foi extraído ou mencionado, NÃO peça novamente no final do fluxo.
-
-3️⃣ CONFIRMAR (APENAS SE TUDO VÁLIDO):
-   ⚠️ ATENÇÃO CRÍTICA: Só peça confirmação se:
-   - Tem serviço ✅
-   - Tem profissional ✅
-   - Tem data ✅
-   - Tem período/hora VÁLIDA E DISPONÍVEL ✅
-   - Tem nome ✅
-   
-   ✅ Se TUDO válido:
-   - Faça resumo: "Perfeito! Confirmando:\n- [SERVICO]\n- [DD/MM/YYYY] às [HORA]\n- Com [PROF]\n- Cliente: [NOME]\n\nPosso confirmar?"
-   - Aguarde "sim" ou similar.
-
-4️⃣ FINALIZAR:
-   - Quando cliente confirmar: use a ferramenta 'confirmar_agendamento'.
-   - NÃO faça confirmação só em texto!`;
-                    break;
-
-                case 'consultar':
-                    instrucoesPorTipo = `
-📋 FLUXO: CONSULTAR (Novo Cliente)
-1. "Verifiquei aqui que não temos nenhum agendamento vinculado a este número."
-2. "Gostaria de marcar um horário? Temos [LISTA SERVIÇOS]"`;
-                    break;
-
-                default:
-                    instrucoesPorTipo = `Responda naturalmente. Se quiser agendar, peça nome só no final!`;
-            }
-        }
-
-        if (validacoes.diaAberto === false) {
-            instrucoesPorTipo += `\n\n⚠️ REGRA CRÍTICA: Se validacoes.diaAberto === false → JAMAIS mostre horários! Responda: "Estamos fechados nesse dia. Pode ser outro dia?"`;
-        }
-
-        // ✅ CORREÇÃO (Fluxo 1): Instrução Prioritária de Bloqueio
-        let instrucaoPrioritaria = "";
-        if (dadosExtraidos.erro_fluxo === "DIA_FECHADO" || validacoes.diaAberto === false) {
-            const motivo = dadosExtraidos.motivo_fechamento || validacoes.motivoErro || "Estabelecimento fechado";
-            instrucaoPrioritaria = `
-🚨 INSTRUÇÃO PRIORITÁRIA DE BLOQUEIO (CRÍTICO):
-O usuário solicitou uma data que está FECHADA.
-MOTIVO: ${motivo}.
-
-❌ PROIBIDO:
-- NÃO ofereça horários (não existem).
-- NÃO invente disponibilidade.
-- NÃO pergunte "qual horário prefere?".
-
-✅ AÇÃO ÚNICA PERMITIDA:
-- Informe educadamente que o estabelecimento está fechado neste dia.
-- Explique o motivo.
-- Pergunte se pode ser no próximo dia útil.
-`;
-        }
-
-        const instrucoesFinais = `Você é ${dados.nomeAgente} da ${dados.nomeLoja}.
-${regraSolo}
-
-${instrucaoPrioritaria}
-
-🕒 CENTRAL DE VERDADE (SISTEMA):
-- HOJE: ${diaSemanaHoje}, ${dataHojeStr}
-- AMANHÃ: ${diaSemanaAmanha}, ${dataAmanhaStr}
-- HORA ATUAL: ${dados.horarioAtual}
-- FUSO HORÁRIO: America/Sao_Paulo
-⚠️ INSTRUÇÃO RÍGIDA: Use ESTA data como referência absoluta.
-
-${contextoCliente}
-
-🛠️ SERVIÇOS DISPONÍVEIS:
-${listaServicos}
-
-👥 PROFISSIONAIS:
-${dados.profissionaisLista}
-
-${resumoDadosExtraidos}
-
-${infoValidacao}
-
-⭐ IDENTIFICAÇÃO (RÍGIDO):
-1. O TELEFONE DO CLIENTE É A SUA IDENTIDADE ÚNICA.
-2. Se os dados mostram 'Cliente REGISTRADO', JAMAIS peça nome, telefone ou qualquer confirmação de quem ele é.
-3. Se o cliente perguntar sobre "meus horários", responda IMEDIATAMENTE com os dados que você já tem no contexto. NÃO peça para ele confirmar o nome ou a data primeiro.
-
-⭐ AGENDAMENTOS EXISTENTES (SITUAÇÃO ATUAL):
-${dados.temAgendamentos ?
-                `⚠️ O cliente JÁ TEM estes agendamentos:
-${dados.agendamentosProximos.map((a: any) => `- ID: ${a.id} | ${a.descricao}`).join('\n')}
-✅ Use estas informações para responder consultas ou pedidos de cancelamento/mudança imediatamente!
-🚫 RÍGIDO: JAMAIS peça o "ID" para o cliente. Se ele disser "o das 11:00", você deve olhar na lista acima, achar o ID correspondente e usar na ferramenta automaticamente.` :
-                `✅ O cliente não possui agendamentos pendentes vinculados a este número.`}
-
-⭐ PERSONALIDADE & ESTILO:
-1. 🎭 ATENDENTE HUMANO E EFICIENTE:
-   - Você é um atendente real, simpático e muito prestativo.
-   - Use uma linguagem natural, como se estivesse conversando no WhatsApp. Evite frases muito formais ou robóticas.
-   - Use emojis de forma moderada para parecer amigável (ex: 😊, 👍, ✂️).
-   - JAMAIS mencione que você é uma IA, robô ou assistente virtual. Se perguntarem, diga que faz parte da equipe da ${dados.nomeLoja}.
-
-2. 💬 COMUNICAÇÃO PROATIVA (REGRAS DE OURO):
-   - **NÃO MOSTRE DURAÇÃO**: Jamais mencione o tempo de duração dos serviços (ex: "30 min"). Apenas o nome do serviço e o preço (se houver).
-   - **OPÇÃO ÚNICA**: Se houver apenas 1 horário disponível, NÃO pergunte "qual você prefere?". Diga: "Tenho apenas o horário das [HORA] disponível. Pode ser esse?"
-   - **MÚLTIPLOS HORÁRIOS**: Se houver mais de um, liste-os e pergunte a preferência de forma natural.
-   - **QUALQUER PROFISSIONAL**: Se o cliente não tiver preferência, diga que pode agendar com "qualquer um dos nossos profissionais" e que você escolherá o melhor disponível.
-   
-   - Se o cliente disse o DIA mas não a HORA:
-     ✅ Veja periodosDisponiveis. Se tiver vários, pergunte qual prefere.
-     ✅ Se só tiver UM período com vaga, já diga: "Para esse dia tenho vagas só à [Tarde], qual horário fica melhor para você?"
-   
-   - Se o cliente escolheu um PERÍODO (ex: "de tarde"):
-     ✅ MOSTRE TODOS OS HORÁRIOS DISPONÍVEIS desse período de forma organizada.
-     
-     ❌ NUNCA limite a 5 horários.
-     ❌ NUNCA omita horários disponíveis.
-   
-   - Se o sistema deu 'puloParaAmanha', informe ao cliente gentilmente: "Para hoje já estamos com a agenda cheia, mas consegui um horário para amanhã, pode ser?"
-
-3. 🛡️ REGRAS DE CONDUTA (ANTI-DISTRAÇÃO):
-           - **FOCO TOTAL**: Você só fala sobre agendamentos, serviços da ${dados.nomeLoja} e horários.
-           - **NÃO DISTRAIA**: Se o cliente tentar mudar de assunto (contar piadas, falar de política, futebol, etc.), traga-o de volta ao agendamento educadamente: "Haha, boa! Mas e aí, vamos marcar seu horário? Qual serviço você está precisando?"
-           - **VALIDAÇÃO ANTES DE OFERECER**: Antes de perguntar "qual você prefere?" ou confirmar um horário, você DEVE verificar se ele está listado nos "HORÁRIOS DISPONÍVEIS" fornecidos no contexto. Se o horário não estiver lá, NÃO o ofereça. Se o cliente pedir um horário indisponível, diga: "Esse horário já está ocupado, mas tenho [LISTAR 3 PRÓXIMOS]. Algum desses serve?"
-   - **FILTRO DE CONTEÚDO**: Jamais conte piadas, dê opiniões pessoais ou fale sobre assuntos fora do escopo da empresa.
-
-4. ✅ REGRAS CRÍTICAS DE SISTEMA:
-   - REGRA DE OURO: JAMAIS diga "Cancelado", "Agendado" ou "Confirmado" se você não tiver usado a ferramenta (tool) correspondente com sucesso.
-   - REAGENDAMENTO: Trate como REMARCAR, identificando o ID do antigo e coletando o novo.
-   - NUNCA invente horários. Use apenas os fornecidos no contexto.
-   - Respostas objetivas e curtas (máx 3-4 linhas, exceto ao listar horários).
-
-5. 🛡️ REGRA CRÍTICA DE VALIDAÇÃO (SEGURANÇA):
-   - 1. Cliente pede horário → VOCÊ VALIDA se está na lista de DISPONÍVEIS.
-   - 2. Se DISPONÍVEL → Segue para confirmação.
-   - 3. Se NÃO DISPONÍVEL → DIGA: "Esse horário já está ocupado" e sugira os próximos.
-   - 4. Se o horário for de fechamento (ex: fecha 18h), 18:00 é PERMITIDO (se durar 30min).
-
-${instrucoesPorTipo}
-
-🎯 PROMPT CUSTOMIZADO:
-${dados.promptBase || 'Seja prestativo e cordial.'}
-
-💡 DICAS FINAIS:
-- Se tiene horariosDisponiveis → MOSTRE TODOS do período escolhido!
-- Se tem periodosDisponiveis → Sugira e pergunte a preferência!
-- Seja o mais natural possível, evite listas longas demais só quando realmente necessário.
-- TRANSPARÊNCIA é a chave: nunca esconda opções do cliente!`;
-
-        console.log(`   System prompt preparado (${instrucoesFinais.length} chars)`);
-
-        // 2️⃣ SALVAR MENSAGEM DO USUÁRIO
-        await salvarMensagemBanco(dados.companyId, dados.jid, "user", dados.mensagem);
-
-        // Atualizar memória local para redundância
-        if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
-        chatsMemoria[memKey].push({
-            role: "user",
-            parts: [{ text: dados.mensagem }]
         });
 
-        console.log(`   Chamando Gemini API (v1beta)...`);
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
-            {
-                // ✅ NOVO: Usar o campo oficial de instruções do sistema!
-                system_instruction: {
-                    parts: [{ text: instrucoesFinais }]
-                },
-                contents: [
-                    ...historico,
-                    {
-                        role: "user",
-                        parts: [{ text: dados.mensagem }]
-                    }
-                ],
-                tools: [
-                    {
-                        function_declarations: [
-                            {
-                                name: "confirmar_agendamento",
-                                description: "Confirma e cria um novo agendamento no sistema",
-                                parameters: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        servico: { type: "STRING", description: "Nome do servico" },
-                                        data: { type: "STRING", description: "Data em DD/MM/YYYY ou YYYY-MM-DD" },
-                                        hora: { type: "STRING", description: "Horario em HH:MM" },
-                                        profissional: { type: "STRING", description: "Nome do profissional" },
-                                        nomeCliente: { type: "STRING", description: "Nome do cliente (se novo)" }
-                                    },
-                                    required: ["servico", "data", "hora", "profissional"]
-                                }
-                            },
-                            {
-                                name: "cancelar_agendamento",
-                                description: "Cancela um agendamento existente",
-                                parameters: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        agendamentoId: { type: "STRING", description: "ID do agendamento" },
-                                        motivo: { type: "STRING", description: "Motivo do cancelamento" }
-                                    },
-                                    required: ["agendamentoId"]
-                                }
-                            },
-                            {
-                                name: "remarcar_agendamento",
-                                description: "Remarcar um agendamento para nova data/hora",
-                                parameters: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        agendamentoId: { type: "STRING", description: "ID do agendamento antigo" },
-                                        novadata: { type: "STRING", description: "Nova data em DD/MM/YYYY ou YYYY-MM-DD" },
-                                        novahora: { type: "STRING", description: "Novo horario em HH:MM" }
-                                    },
-                                    required: ["agendamentoId", "novadata", "novahora"]
-                                }
-                            },
-                            {
-                                name: "adicionar_observacao",
-                                description: "Adiciona comentario ou observacao ao agendamento",
-                                parameters: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        agendamentoId: { type: "STRING", description: "ID do agendamento" },
-                                        observacao: { type: "STRING", description: "Texto da observacao" }
-                                    },
-                                    required: ["agendamentoId", "observacao"]
-                                }
-                            }
-                        ]
-                    }
-                ]
-            }
-        );
-
-        console.log(`   Resposta recebida do Gemini`);
-
-        const geminiData = response.data as any;
-        const part = geminiData?.candidates?.[0]?.content?.parts?.[0];
-        if (!part) {
-            return "Ops, não consegui gerar uma resposta agora. Pode tentar novamente?";
+        // 🛡️ TRAVA DE SEGURANÇA: O Gemini exige que a PRIMEIRA mensagem seja do ROLE 'user'
+        const firstUserIndex = geminiHistory.findIndex(h => h.role === 'user');
+        if (firstUserIndex !== -1) {
+            geminiHistory = geminiHistory.slice(firstUserIndex);
+        } else {
+            geminiHistory = [];
         }
 
-        if (part.functionCall) {
-            console.log(`   Function call detectado: ${part.functionCall.name}`);
+        // 🛡️ TRAVA DE INTEGRIDADE: Não podemos terminar o histórico com uma chamada de ferramenta sem resposta
+        while (geminiHistory.length > 0) {
+            const lastMsg = geminiHistory[geminiHistory.length - 1];
+            const isUnfinishedToolCall = lastMsg.role === 'model' && lastMsg.parts?.some((p: any) => p.functionCall);
 
-            const resultado = await processarFunctionCall(
-                part.functionCall.name,
-                part.functionCall.args,
-                dados
+            if (isUnfinishedToolCall) {
+                console.log('⚠️ [AI] Removendo chamada de ferramenta inacabada do final do histórico');
+                geminiHistory.pop();
+            } else {
+                break;
+            }
+        }
+
+        const chatSession = model.startChat({ history: geminiHistory });
+
+        console.log(`\n--- 🤖 [AI PROMPT] ---`);
+        console.log(`💬 User: "${message}"`);
+        console.log(`----------------------\n`);
+
+        let result;
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        while (retryCount < maxRetries) {
+            try {
+                result = await chatSession.sendMessage(message);
+                break;
+            } catch (err: any) {
+                if (err.message?.includes('429') || err.message?.includes('quota')) {
+                    retryCount++;
+                    const delay = Math.pow(2, retryCount) * 1000;
+                    console.warn(`⚠️ [AI] Limite de quota atingido (429). Tentativa ${retryCount}/${maxRetries} em ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    throw err;
+                }
+            }
+        }
+
+        if (!result) throw new Error('Não foi possível obter resposta da IA após várias tentativas (Quota).');
+
+        // 6. Loop de Function Calling
+        let callCount = 0;
+        while (result.response.functionCalls() && callCount < 10) {
+            callCount++;
+            const functionCalls = result.response.functionCalls();
+            console.log(`🛠️ [AI TOOL CALLS]:`, JSON.stringify(functionCalls, null, 2));
+
+            const toolResults = await executeTools(
+                functionCalls,
+                companyId,
+                clientPhone
             );
+            console.log(`✅ [TOOL RESULTS]:`, JSON.stringify(toolResults, null, 2));
 
-            const msgFinal = resultado.mensagem.trim();
-
-            // 3️⃣ SALVAR RESPOSTA DO MODELO (FUNCTION CALL)
-            await salvarMensagemBanco(dados.companyId, dados.jid, "assistant", msgFinal);
-
-            if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
-            chatsMemoria[memKey].push({
-                role: "assistant",
-                parts: [{ text: msgFinal }]
-            });
-
-            return msgFinal;
+            console.log('📨 [AI] Enviando resultados de volta para IA');
+            
+            let toolRetryCount = 0;
+            while (toolRetryCount < maxRetries) {
+                try {
+                    result = await chatSession.sendMessage(toolResults);
+                    break;
+                } catch (err: any) {
+                    if (err.message?.includes('429') || err.message?.includes('quota')) {
+                        toolRetryCount++;
+                        const delay = Math.pow(2, toolRetryCount) * 1000;
+                        console.warn(`⚠️ [AI] Limite de quota (Tool) atingido (429). Tentativa ${toolRetryCount}/${maxRetries} em ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw err;
+                    }
+                }
+            }
         }
 
-        const textoIA = (part.text || "Como posso ajudar?").trim();
-
-        // 3️⃣ SALVAR RESPOSTA DO MODELO (TEXTO)
-        await salvarMensagemBanco(dados.companyId, dados.jid, "assistant", textoIA);
-
-        if (!chatsMemoria[memKey]) chatsMemoria[memKey] = [];
-        chatsMemoria[memKey].push({
-            role: "assistant",
-            parts: [{ text: textoIA }]
-        });
-
-        console.log(`   Resposta de texto adicionada a memoria`);
-
-        if (chatsMemoria[memKey].length > 20) {
-            chatsMemoria[memKey] = chatsMemoria[memKey].slice(-20);
-            console.log(`   Historico limitado a 20 mensagens`);
+        let finalResponse = '';
+        try {
+            const candidates = result.response.candidates;
+            if (candidates && candidates.length > 0) {
+                const firstCandidate = candidates[0];
+                if (firstCandidate.finishReason && firstCandidate.finishReason !== 'STOP') {
+                    console.warn(`⚠️ [AI] Resposta finalizada com motivo: ${firstCandidate.finishReason}`);
+                }
+            }
+            finalResponse = result.response.text();
+        } catch (e) {
+            console.warn('⚠️ [AI] Erro ao extrair texto da resposta (pode ser apenas tool call):', e);
         }
 
-        console.log(`   Resposta gerada com sucesso\n`);
-        return textoIA;
+        // 🛡️ SEGUNDA DEFESA: Se a resposta for vazia mas houve chamadas de ferramenta, 
+        // forçar a IA a falar algo para o cliente.
+        if (!finalResponse.trim() && callCount > 0) {
+            console.log('🔄 [AI] Resposta vazia após ferramentas. Solicitando verbalização reforçada...');
+            try {
+                const forceResponse = await chatSession.sendMessage('Gere agora uma resposta curta e natural para o cliente com base nas informações que você acabou de receber das ferramentas. Não chame mais ferramentas.');
+                finalResponse = forceResponse.response.text();
+                
+                if (!finalResponse.trim()) {
+                    console.warn('⚠️ [AI] Segunda tentativa de verbalização falhou (vazia).');
+                    console.log('📦 [DEBUG] Raw Response:', JSON.stringify(forceResponse.response, null, 2));
+                }
+            } catch (err: any) {
+                console.error('❌ [AI] Erro na verbalização forçada:', err.message);
+            }
+        }
+        if (!finalResponse.trim()) {
+            finalResponse = `Olá! Sou o ${agentName} da ${businessName}. Como posso te ajudar hoje?`;
+        }
+
+        console.log(`\n--- 🤖 [AI RESPONSE] ---`);
+        console.log(`✨ Bot: "${finalResponse}"`);
+        console.log(`🏢 Company ID: ${companyId}`);
+        console.log(`------------------------\n`);
+
+        // ⭐ ATUALIZAÇÃO CRÍTICA: Pegamos o histórico COMPLETO da sessão (inclui ferramentas)
+        const fullHistory = await chatSession.getHistory();
+
+        // 7. Salvar histórico no banco
+        const messagesToSave = fullHistory.slice(-50);
+
+        const { error: upsertError } = await supabase.from('conversations').upsert({
+            client_phone: clientPhone,
+            company_id: companyId,
+            messages: messagesToSave,
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'client_phone,company_id' });
+
+        if (upsertError) {
+            console.log('⚠️ [AI] Erro ao salvar em messages, tentando history:', upsertError.message);
+            await supabase.from('conversations').upsert({
+                client_phone: clientPhone,
+                company_id: companyId,
+                history: messagesToSave,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'client_phone,company_id' });
+        }
+
+        console.log('✅ [AI] Histórico completo salvo com', messagesToSave.length, 'itens');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        return finalResponse;
 
     } catch (error: any) {
-        console.error("ERRO NA IA:", error.message);
-        return "Ops, nosso sistema está com problema. Pode tentar em alguns minutos?";
+        console.error('❌ [AI] Erro crítico no chat:', error.message);
+        return "Olá! Tive um pequeno problema ao processar sua mensagem, mas já estou de volta. Como posso ajudar com seu agendamento?";
     }
-};
-
-// Function calls
-const processarFunctionCall = async (
-    nomeFuncao: string,
-    args: any,
-    dados: any
-): Promise<{ mensagem: string; sucesso: boolean }> => {
-    try {
-        console.log(`   Processando: ${nomeFuncao}`);
-
-        switch (nomeFuncao) {
-            case 'confirmar_agendamento':
-                return await procesarConfirmarAgendamento(args, dados);
-            case 'cancelar_agendamento':
-                return await processarCancelarAgendamento(args, dados);
-            case 'remarcar_agendamento':
-                return await processarRemarcarAgendamento(args, dados);
-            case 'adicionar_observacao':
-                return await processarAdicionarObservacao(args, dados);
-            default:
-                return {
-                    mensagem: 'Funcao desconhecida',
-                    sucesso: false
-                };
-        }
-    } catch (error) {
-        console.error(`Erro ao processar function call:`, error);
-        return {
-            mensagem: 'Erro ao processar acao',
-            sucesso: false
-        };
-    }
-};
-
-const procesarConfirmarAgendamento = async (args: any, dados: any) => {
-    try {
-        console.log(`   Confirmando agendamento...`);
-        console.log(`      Servico: ${args.servico}`);
-        console.log(`      Data: ${args.data}`);
-        console.log(`      Hora: ${args.hora}`);
-        console.log(`      Profissional: ${args.profissional}`);
-        console.log(`      Cliente: ${args.nomeCliente || 'Conhecido'}`);
-
-        let clienteId = dados.clienteId;
-
-        if (!clienteId && args.nomeCliente) {
-            console.log(`   Criando novo cliente: ${args.nomeCliente}`);
-
-            let telefoneLimpo = dados.jid.split('@')[0];
-            if (!telefoneLimpo.startsWith('55')) {
-                telefoneLimpo = `55${telefoneLimpo}`;
-            }
-
-            console.log(`   Telefone formatado: ${telefoneLimpo}`);
-
-            const resultado = await criarNovoCliente(
-                {
-                    nome: args.nomeCliente,
-                    telefone: telefoneLimpo,
-                    data_nascimento: undefined
-                },
-                dados.companyId
-            );
-
-            if (!resultado.sucesso || !resultado.cliente) {
-                console.log(`   Erro ao criar cliente`);
-                return {
-                    mensagem: 'Erro ao cadastrar cliente',
-                    sucesso: false
-                };
-            }
-
-            clienteId = resultado.cliente.id;
-            console.log(`   Cliente criado: ${clienteId}`);
-        }
-
-        let dataFormatada = args.data;
-        if (args.data && args.data.includes('/')) {
-            const [dia, mes, ano] = args.data.split('/');
-            dataFormatada = `${ano}-${mes}-${dia}`;
-            console.log(`   Data convertida: ${args.data} -> ${dataFormatada}`);
-        }
-
-        // ✅ VALIDAÇÃO FINAL: Revalidar se dia está aberto (CRÍTICO)
-        // Isso impede agendamento mesmo se a IA ignorar o aviso
-        try {
-            const dataObj = new Date(dataFormatada + 'T12:00:00-03:00'); // Fuso horário seguro
-            const diaSemana = dataObj.getDay();
-            const diasNomes = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'];
-            const nomeDia = diasNomes[diaSemana];
-
-            console.log(`   🛡️ Validação Final para ${nomeDia} (${dataFormatada})...`);
-
-            const { data: settings } = await axios.get(
-                `${process.env.SUPABASE_URL}/rest/v1/configuracoes`,
-                {
-                    params: { company_id: `eq.${dados.companyId}`, select: 'dias_abertura' },
-                    headers: {
-                        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`
-                    }
-                }
-            );
-
-            if (settings?.[0]?.dias_abertura?.[nomeDia] === false) {
-                 console.log(`🚫 BLOQUEIO FINAL: Tentou agendar em dia fechado (${nomeDia})!`);
-                 return {
-                    mensagem: `Ops! Notei aqui que estamos fechados às ${nomeDia}s. Que tal escolher outro dia?`,
-                    sucesso: false
-                 };
-            }
-        } catch (err) {
-            console.error('Erro na validação final:', err);
-            // Se der erro na validação, seguimos para tentarAgendar que tem suas próprias validações
-        }
-
-        console.log(`   Chamando tentarAgendar...`);
-
-        // 🔒 SEGURANÇA: Validar disponibilidade novamente (caso IA tenha alucinado)
-        if (args.profissional && args.data && args.hora) {
-            const { validarHorarioDisponivel } = await import('./services/appointmentService.js');
-            const validacao = await validarHorarioDisponivel(
-                dados.companyId,
-                // Precisamos buscar o ID do profissional pelo nome se não vier no args (args geralmente tem nome)
-                // Mas tentarAgendar resolve isso. Vamos confiar no tentarAgendar,
-                // MAS vamos garantir que datas não sejam inventadas.
-                // A melhor validação é no AgendamentoController.
-                // Vamos passar a responsabilidade para o AgendamentoController ser RÍGIDO.
-                // Mas aqui, vamos garantir que a DATA bata com a extraída!
-                "" as any, // placeholder, na verdade vamos só validar data
-                args.data,
-                args.hora
-            );
-
-            // Se a data confirmada pela IA for diferente da data extraída no contexto
-            // e o usuário NÃO pediu explicitamente outra data na última mensagem...
-            if (dados.dadosExtraidos && dados.dadosExtraidos.data) {
-                if (dados.dadosExtraidos.data !== dataFormatada) {
-                    console.warn(`⚠️ ALERTA DE SEGURANÇA: IA tentou agendar para ${dataFormatada} mas contexto dizia ${dados.dadosExtraidos.data}`);
-                    console.warn(`🔒 FORÇANDO data do contexto: ${dados.dadosExtraidos.data}`);
-
-                    // 🔒 CORREÇÃO AUTOMÁTICA: Usar a data que foi validada e extraída pelo sistema!
-                    dataFormatada = dados.dadosExtraidos.data;
-
-                    // Revalidar com a data correta
-                    const revalidacao = await validarHorarioDisponivel(
-                        dados.companyId,
-                        "" as any,
-                        dataFormatada, // Data correta (06/02)
-                        args.hora
-                    );
-
-                    if (!revalidacao.disponivel) {
-                        return {
-                            mensagem: `Ops! Verifiquei aqui e o horário das ${args.hora} no dia ${dataFormatada.split('-').reverse().join('/')} acabou de ser ocupado. Pode ser em outro horário?`,
-                            sucesso: false
-                        };
-                    }
-                }
-            }
-        }
-
-        // ✅ VALIDAÇÃO FINAL (Solicitada)
-        // 1) Dia aberto / dentro do funcionamento
-        const diaFinal = await validarDiaAberto(dados.companyId, dataFormatada, args.hora);
-        if (!diaFinal.aberto) {
-            return {
-                mensagem: JSON.stringify({
-                    erro: "estabelecimento_fechado",
-                    motivo: diaFinal.motivo || "Estamos fechados neste dia.",
-                    instrucao: "Avise o cliente que está fechado e peça para escolher outro dia."
-                }),
-                sucesso: false
-            };
-        }
-
-        // 2) Disponibilidade do horário (ocupado)
-        const { validarHorarioDisponivel } = await import('./services/appointmentService.js');
-        const validacaoFinal = await validarHorarioDisponivel(dados.companyId, "" as any, dataFormatada, args.hora);
-
-        if (!validacaoFinal.disponivel) {
-            return {
-                mensagem: JSON.stringify({
-                    erro: "horario_ocupado",
-                    motivo: validacaoFinal.motivo || `Horário ${args.hora} indisponível.`,
-                    instrucao: "Avise o cliente que o horário está ocupado e ofereça as alternativas disponíveis no contexto."
-                }),
-                sucesso: false
-            };
-        }
-
-        const resultadoAgendamento = await tentarAgendar(
-            {
-                ...args,
-                data: dataFormatada
-            },
-            dados.companyId,
-            clienteId,
-            dados.jid
-        );
-
-        console.log(`   Resultado: ${resultadoAgendamento.status}`);
-
-        // ⚠️ VERIFICAR RESULTADO ESPECÍFICO:
-        if (resultadoAgendamento.status === 'pedir_nome') {
-            return {
-                mensagem: 'Preciso do seu nome completo para confirmar o agendamento.',
-                sucesso: false
-            };
-        }
-
-        if (resultadoAgendamento.status === 'erro') {
-            console.error('❌ ERRO AO SALVAR:', resultadoAgendamento);
-            return {
-                mensagem: 'Tive um problema técnico ao salvar seu agendamento. Pode tentar novamente em alguns instantes?',
-                sucesso: false
-            };
-        }
-
-        if (resultadoAgendamento.status === 'ocupado') {
-             return {
-                 mensagem: resultadoAgendamento.mensagem || 'Horário ocupado.',
-                 sucesso: false
-             };
-        }
-
-        if (resultadoAgendamento.status === 'sucesso') {
-            console.log(`   Agendamento criado com sucesso!`);
-
-            // ✅ LIMPAR CONTEXTO (CRÍTICO)
-            // Impede que a IA continue lembrando do agendamento antigo na próxima interação
-            console.log(`🧹 Limpando contexto da conversa...`);
-            salvarContextoConversa(dados.companyId, dados.jid, {
-                servico: null,
-                data: null,
-                hora: null,
-                periodo: null,
-                profissional: null,
-                nome: null,
-                horariosDisponiveis: [],
-                periodosDisponiveis: []
-            });
-
-            const res = resultadoAgendamento as any;
-
-            const [ano, mes, dia] = res.data.split('-');
-            const dataFormatadaMostra = `${dia}/${mes}/${ano}`;
-            const nomeClienteFinal = args.nomeCliente || dados.clienteNome || 'Cliente';
-
-            // ✅ LIMPEZA DE MEMÓRIA (RESET DE INTENÇÃO)
-            const memKey = `${dados.companyId}_${dados.jid}`;
-            chatsMemoria[memKey] = [{
-                role: "system",
-                parts: [{ text: `[RESUMO DE MEMÓRIA]: O último agendamento foi realizado com sucesso: ${res.servico} em ${dataFormatadaMostra} às ${res.hora}. O contexto anterior foi arquivado para evitar confusão.` }]
-            }];
-            
-            // Opcional: Limpar histórico do banco também se desejar, mas o reset em memória já ajuda o "contexto imediato"
-            // await excluirHistoricoBanco(dados.companyId, dados.jid); // Descomente se quiser limpar TOTAL
-
-            return {
-                mensagem: `✅ Agendamento realizado ${nomeClienteFinal}!\n\n📋 ${res.servico}\n📅 ${dataFormatadaMostra} às ${res.hora}\n👤 ${res.profissional}\n\nAté logo! 👋`,
-                sucesso: true
-            };
-        }
-
-        console.log(`   Erro ao agendar: ${resultadoAgendamento.mensagem}`);
-        return {
-            mensagem: resultadoAgendamento.mensagem || 'Erro ao agendar',
-            sucesso: false
-        };
-    } catch (error) {
-        console.error(`Erro procesarConfirmarAgendamento:`, error);
-        return {
-            mensagem: 'Erro ao confirmar agendamento',
-            sucesso: false
-        };
-    }
-};
-
-const processarCancelarAgendamento = async (args: any, dados: any) => {
-    try {
-        console.log(`   Cancelando agendamento: ${args.agendamentoId}`);
-        const resultado = await cancelarAgendamento(args.agendamentoId, dados.companyId, args.motivo);
-
-        if (resultado.status === 'sucesso') {
-            return {
-                mensagem: '✅ Agendamento cancelado com sucesso! Se precisar de algo mais, é só falar.',
-                sucesso: true
-            };
-        }
-
-        return {
-            mensagem: `❌ Não consegui cancelar: ${resultado.mensagem}`,
-            sucesso: false
-        };
-    } catch (error) {
-        console.error(`Erro cancelarAgendamento:`, error);
-        return {
-            mensagem: 'Erro ao cancelar agendamento',
-            sucesso: false
-        };
-    }
-};
-
-const processarRemarcarAgendamento = async (args: any, dados: any) => {
-    try {
-        console.log(`\n🔄 [REMARCAR] Iniciando processo para ID: ${args.agendamentoId}`);
-
-        if (!args.agendamentoId) {
-            return {
-                mensagem: "❌ Erro: Não identifiquei qual agendamento você quer mudar. Pode me confirmar o horário antigo?",
-                sucesso: false
-            };
-        }
-
-        // --- BUSCAR DADOS DO AGENDAMENTO ORIGINAL ---
-        const agendamentoOriginal = (dados.agendamentosCompletos || []).find((a: any) => String(a.id) === String(args.agendamentoId));
-
-        if (!agendamentoOriginal) {
-            console.log(`   ❌ Agendamento ${args.agendamentoId} não encontrado no contexto.`);
-            return {
-                mensagem: "❌ Não encontrei esse agendamento nos meus registros. Pode confirmar o horário?",
-                sucesso: false
-            };
-        }
-
-        console.log(`   ✅ Original: ${agendamentoOriginal.servico} (${agendamentoOriginal.data} ${agendamentoOriginal.hora})`);
-
-        // --- DEFINIR NOVOS DADOS (com fallback para o original) ---
-        let novadata = args.novadata || agendamentoOriginal.data;
-        let novahora = args.novahora;
-        let servico = agendamentoOriginal.servico;
-        let profissional = agendamentoOriginal.profissional;
-
-        if (!novahora) {
-            return {
-                mensagem: "❌ Para qual horário você gostaria de mudar?",
-                sucesso: false
-            };
-        }
-
-        // Formatação de data
-        let dataFormatada = novadata;
-        if (novadata && novadata.includes('/')) {
-            const [dia, mes, ano] = novadata.split('/');
-            dataFormatada = `${ano}-${mes}-${dia}`;
-        }
-
-        // 1. Tentar criar o NOVO agendamento primeiro (pra garantir a vaga)
-        console.log(`   Step 1: Criando novo agendamento (${dataFormatada} às ${novahora})...`);
-        const resultadoNovo = await tentarAgendar(
-            {
-                servico,
-                data: dataFormatada,
-                hora: novahora,
-                profissional
-            },
-            dados.companyId,
-            dados.clienteId,
-            dados.jid
-        );
-
-        if (resultadoNovo.status !== 'sucesso') {
-            console.log(`   ❌ Falha ao criar novo: ${resultadoNovo.mensagem}`);
-            return {
-                mensagem: `❌ Não consegui marcar para este novo horário: ${resultadoNovo.mensagem}`,
-                sucesso: false
-            };
-        }
-
-        // 2. Se deu certo, CANCELAR o antigo
-        console.log(`   Step 2: Novo OK! Cancelando antigo ID: ${args.agendamentoId}...`);
-        const resultadoCancel = await cancelarAgendamento(args.agendamentoId, dados.companyId, 'Remarcado pelo cliente');
-
-        if (resultadoCancel.status !== 'sucesso') {
-            console.log(`   ⚠️ Novo criado, mas falha ao cancelar antigo: ${resultadoCancel.mensagem}`);
-            // Aqui temos um "sucesso parcial". Vamos informar, mas tecnicamente a vaga nova foi garantida.
-            return {
-                mensagem: `✅ Novo horário agendado para ${novahora}!\n\n⚠️ Mas tive um erro ao desmarcar o antigo (${agendamentoOriginal.hora}). Por favor, peça ao atendente para remover o horário antigo manualmente.`,
-                sucesso: true
-            };
-        }
-
-        const [ano, mes, dia] = dataFormatada.split('-');
-        return {
-            mensagem: `✅ Reagendamento realizado com sucesso!\n\n❌ O horário das ${agendamentoOriginal.hora} foi cancelado.\n✅ O novo horário é dia ${dia}/${mes} às ${novahora}.\n\nAté logo!`,
-            sucesso: true
-        };
-
-    } catch (error) {
-        console.error(`❌ Erro processarRemarcarAgendamento:`, error);
-        return {
-            mensagem: '❌ Desculpe, tive um erro técnico ao processar seu reagendamento. Pode tentar novamente?',
-            sucesso: false
-        };
-    }
-};
-
-const processarAdicionarObservacao = async (args: any, dados: any) => {
-    try {
-        console.log(`   Adicionando observacao: ${args.observacao.substring(0, 30)}...`);
-        const resultado = await addObs(args.agendamentoId, dados.companyId, args.observacao);
-
-        if (resultado.status === 'sucesso') {
-            return {
-                mensagem: '✅ Observação adicionada ao seu agendamento!',
-                sucesso: true
-            };
-        }
-
-        return {
-            mensagem: '❌ Não consegui adicionar a observação.',
-            sucesso: false
-        };
-    } catch (error) {
-        console.error(`Erro adicionarObservacao:`, error);
-        return {
-            mensagem: 'Erro ao adicionar observação',
-            sucesso: false
-        };
-    }
-};
-
-export const limparMemoriaChat = async (companyId: string, jid: string) => {
-    const memKey = `${companyId}_${jid}`;
-
-    // Limpar Banco
-    await excluirHistoricoBanco(companyId, jid);
-
-    // Limpar Memória
-    if (chatsMemoria[memKey]) {
-        delete chatsMemoria[memKey];
-        console.log(`Memoria de chat limpa: ${memKey}`);
-    }
-};
-
-export const getStatusMemoria = () => {
-    return {
-        totalChats: Object.keys(chatsMemoria).length,
-        chats: Object.keys(chatsMemoria)
-    };
-};
-
-// Limpeza automática de memória
-console.log('🧹 [AI] Iniciando sistema de limpeza automática de memória...');
-
-setInterval(() => {
-    try {
-        let totalChats = Object.keys(chatsMemoria).length;
-        let chatsLimpos = 0;
-
-        for (const key in chatsMemoria) {
-            if (chatsMemoria[key].length > 20) {
-                chatsMemoria[key] = chatsMemoria[key].slice(-10);
-                chatsLimpos++;
-            }
-        }
-
-        if (chatsLimpos > 0) {
-            console.log(`🧹 [AI] Memória limpa!`);
-            console.log(`   Total de chats ativos: ${totalChats}`);
-            console.log(`   Chats otimizados: ${chatsLimpos}`);
-        }
-    } catch (error) {
-        console.error('❌ [AI] Erro ao limpar memória:', error);
-    }
-}, 600000); // 10 minutos
-
-console.log('✅ [AI] Sistema de limpeza configurado (executa a cada 10min)');
+}

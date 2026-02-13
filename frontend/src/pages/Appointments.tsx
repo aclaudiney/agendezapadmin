@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { API_URL } from '../config/api';
 import { Search, Filter, Download, MoreVertical, Plus, X, AlertCircle, Edit2, Check, CreditCard, Trash2 } from 'lucide-react';
 
 const ComboSelect = ({ 
@@ -347,6 +348,25 @@ const Appointments: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // ✅ VALIDAÇÃO DE CAMPOS OBRIGATÓRIOS
+    if (!formData.cliente_id) {
+      setErro('Por favor, selecione um cliente.');
+      return;
+    }
+    if (!formData.profissional_id) {
+      setErro('Por favor, selecione um profissional.');
+      return;
+    }
+    if (formData.servicos_ids.length === 0) {
+      setErro('Por favor, adicione pelo menos um serviço.');
+      return;
+    }
+    if (!formData.hora_agendamento) {
+      setErro('Por favor, informe o horário.');
+      return;
+    }
+
     setSaving(true);
     setErro('');
 
@@ -400,6 +420,16 @@ const Appointments: React.FC = () => {
           .single();
         if (insertError) throw insertError;
         agendamentoId = insertData.id;
+
+        // 🔔 NOTIFICAR PROFISSIONAL (Sistema/Manual)
+        fetch(`${API_URL}/api/appointments/notify-new`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyId: companyId,
+            appointmentId: agendamentoId
+          })
+        }).catch(err => console.error('⚠️ Erro ao disparar notificação:', err));
       }
 
       // 2. Deletar serviços antigos
