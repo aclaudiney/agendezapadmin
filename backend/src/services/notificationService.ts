@@ -28,9 +28,14 @@ export const NotificationService = {
                 return;
             }
 
-            const profissionalTelefone = apt.profissional?.telefone;
+            // Normalizar dados (Supabase às vezes retorna como array mesmo com .single())
+            const profissional = Array.isArray(apt.profissional) ? apt.profissional[0] : apt.profissional;
+            const cliente = Array.isArray(apt.cliente) ? apt.cliente[0] : apt.cliente;
+            const servico = Array.isArray(apt.servico) ? apt.servico[0] : apt.servico;
+
+            const profissionalTelefone = profissional?.telefone;
             if (!profissionalTelefone) {
-                console.warn(`⚠️ [NOTIFICAÇÃO] Profissional ${apt.profissional?.nome} não tem telefone cadastrado.`);
+                console.warn(`⚠️ [NOTIFICAÇÃO] Profissional ${profissional?.nome || 'desconhecido'} não tem telefone cadastrado.`);
                 return;
             }
 
@@ -40,11 +45,11 @@ export const NotificationService = {
             
             const mensagem = `*📌 NOVO AGENDAMENTO!*
             
-Olá *${apt.profissional.nome}*, um novo horário foi agendado para você:
+Olá *${profissional.nome}*, um novo horário foi agendado para você:
 
-👤 *Cliente:* ${apt.cliente?.nome || 'Não informado'}
-📱 *Telefone:* ${apt.cliente?.telefone || 'Não informado'}
-✂️ *Serviço:* ${apt.servico?.nome || 'Serviço'}
+👤 *Cliente:* ${cliente?.nome || 'Não informado'}
+📱 *Telefone:* ${cliente?.telefone || 'Não informado'}
+✂️ *Serviço:* ${servico?.nome || 'Serviço'}
 📅 *Data:* ${dataFormatada}
 ⏰ *Hora:* ${horaFormatada}
 
@@ -53,7 +58,7 @@ _Agendamento realizado via AgendeZap._`;
             // 3. Enviar via WhatsApp (usando a instância da própria empresa)
             await evolutionAPI.sendTextMessage(companyId, profissionalTelefone, mensagem);
             
-            console.log(`✅ [NOTIFICAÇÃO] Profissional ${apt.profissional.nome} avisado com sucesso!`);
+            console.log(`✅ [NOTIFICAÇÃO] Profissional ${profissional.nome} avisado com sucesso!`);
 
         } catch (error: any) {
             console.error('❌ [NOTIFICAÇÃO] Erro crítico ao notificar profissional:', error.message);
