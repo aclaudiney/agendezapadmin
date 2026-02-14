@@ -364,10 +364,10 @@ export const FollowUpService = {
             if (result.success) {
                 console.log(` ✅ [Evolution] Mensagem enviada com sucesso!`);
                 
-                // 3. REGISTRAR IMEDIATAMENTE (Memória + Banco)
+                // 3. REGISTRAR IMEDIATAMENTE (Memória + Banco de Follow-up)
                 this.sentCache.add(cacheKey);
                 
-                const { error: insertError } = await supabase.from('follow_up_messages').insert({
+                await supabase.from('follow_up_messages').insert({
                     company_id: companyId,
                     appointment_id: agendamentoId,
                     type: normalizedType,
@@ -375,8 +375,46 @@ export const FollowUpService = {
                     sent_at: new Date()
                 });
 
-                if (insertError) {
-                    console.error(` ❌ Erro ao registrar no banco:`, insertError.message);
+                // 4. SINCRONIZAR COM CRM E IA (CONVERSA ÚNICA)
+                try {
+                    const { salvarMensagemWhatsApp } = await import('./messageLoggerService.js');
+                    
+                    // A. Salvar no CRM (whatsapp_messages e whatsapp_conversations)
+                    await salvarMensagemWhatsApp({
+                        companyId,
+                        clientPhone: telefone,
+                        clientName: vars.cliente_nome || 'Cliente',
+                        messageText: message,
+                        messageType: 'text',
+                        direction: 'outgoing',
+                        conversationType: 'confirmacao'
+                    });
+
+                    // B. Salvar no Histórico da IA (conversations)
+                    // Buscamos a conversa atual
+                    const { data: convData } = await supabase
+                        .from('conversations')
+                        .select('messages')
+                        .eq('client_phone', telefone)
+                        .eq('company_id', companyId)
+                        .maybeSingle();
+
+                    const currentMessages = convData?.messages || [];
+                    const newMessage = { role: 'assistant', content: message };
+                    const updatedMessages = [...currentMessages, newMessage].slice(-50);
+
+                    await supabase
+                        .from('conversations')
+                        .upsert({
+                            company_id: companyId,
+                            client_phone: telefone,
+                            messages: updatedMessages,
+                            updated_at: new Date().toISOString()
+                        }, { onConflict: 'company_id,client_phone' });
+
+                    console.log(` ✅ [Follow-up] Histórico da IA e CRM sincronizados.`);
+                } catch (syncError) {
+                    console.error(` ❌ Erro ao sincronizar Follow-up com CRM/IA:`, syncError);
                 }
             } else {
                 console.error(` ❌ [Evolution] Falha ao enviar:`, result.error);

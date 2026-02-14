@@ -147,7 +147,7 @@ export async function processMessage(data: any, jobId: string | number = 'direct
 }
 
 /**
- * Adicionar mensagem na fila para processamento
+ * Adicionar mensagem na fila para processamento com agrupamento (Debounce)
  */
 export async function addMessageToQueue(
     companyId: string,
@@ -155,12 +155,40 @@ export async function addMessageToQueue(
     message: string,
     messageData: any
 ) {
-    await messageQueue.add({
-        companyId,
-        phone,
-        message,
-        messageData
-    }, {
-        priority: 1 // Prioridade normal
-    });
+    const jobId = `${companyId}:${phone}`;
+    const existingJob = await messageQueue.getJob(jobId);
+
+    if (existingJob) {
+        // Se já existe um job esperando, atualizamos a mensagem concatenando
+        const newData = {
+            ...existingJob.data,
+            message: `${existingJob.data.message}\n${message}`,
+            messageData: {
+                ...existingJob.data.messageData,
+                ...messageData
+            }
+        };
+        
+        // Remove o job anterior e cria um novo com a mesma ID e delay resetado
+        await existingJob.remove();
+        await messageQueue.add(newData, {
+            jobId,
+            delay: 2500, // Reinicia o contador de 2.5 segundos
+            priority: 1
+        });
+        console.log(` 🔄 [Queue] Mensagem agrupada para ${phone}. Novo delay de 2.5s.`);
+    } else {
+        // Primeiro job do cliente
+        await messageQueue.add({
+            companyId,
+            phone,
+            message,
+            messageData
+        }, {
+            jobId,
+            delay: 2500, // Espera 2.5 segundos antes de processar
+            priority: 1
+        });
+        console.log(` 📥 [Queue] Primeira mensagem de ${phone}. Aguardando 2.5s para agrupamento.`);
+    }
 }
