@@ -203,7 +203,7 @@ export const FollowUpService = {
                         if (!jaEnviou && !this.sentCache.has(`${agendamento.id}_${type}`)) {
                             console.log(`🚀 [FOLLOW-UP] DISPARANDO AVISO FIXO para ${cliente.nome}!`);
                             const msg = this.replaceTemplate(mode.message_template, vars);
-                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg);
+                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg, cliente.nome);
                         } else {
                             // Se já enviou, alimenta o cache para garantir que não tente novamente nesta execução
                             this.sentCache.add(`${agendamento.id}_${type}`);
@@ -237,7 +237,7 @@ export const FollowUpService = {
                         if (!jaEnviou && !this.sentCache.has(`${agendamento.id}_${type}`)) {
                             console.log(`🚀 [FOLLOW-UP] DISPARANDO LEMBRETE para ${cliente.nome}!`);
                             const msg = this.replaceTemplate(mode.message_template, { ...vars, minutos: lembreteMin });
-                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg);
+                            await this.sendMessage(companyId, cliente.telefone, agendamento.id, type, msg, cliente.nome);
                         } else {
                             // Se já enviou, alimenta o cache para garantir que não tente novamente nesta execução
                             this.sentCache.add(`${agendamento.id}_${type}`);
@@ -305,7 +305,7 @@ export const FollowUpService = {
 
                     console.log(`🚀 [FOLLOW-UP] DISPARANDO RECORRÊNCIA para ${cliente.nome} (${diffDias} dias após)!`);
                     const msg = this.replaceTemplate(mode.message_template, vars);
-                    await this.sendMessage(companyId, cliente.telefone, lastFinalizado.id, type, msg);
+                    await this.sendMessage(companyId, cliente.telefone, lastFinalizado.id, type, msg, cliente.nome);
                 }
             }
         }
@@ -322,7 +322,7 @@ export const FollowUpService = {
         return msg;
     },
 
-    async sendMessage(companyId: string, telefone: string, agendamentoId: string, type: string, message: string) {
+    async sendMessage(companyId: string, telefone: string, agendamentoId: string, type: string, message: string, clientName: string = 'Cliente') {
         // ✅ NORMALIZAÇÃO CRÍTICA: O banco só aceita 'aviso', 'lembrete' ou 'recorrencia'
         // Se o tipo vier como 'antecedencia', 'time_fixed', etc, convertemos para o que o banco aceita
         let normalizedType = 'lembrete'; // padrão
@@ -383,7 +383,7 @@ export const FollowUpService = {
                     await salvarMensagemWhatsApp({
                         companyId,
                         clientPhone: telefone,
-                        clientName: vars.cliente_nome || 'Cliente',
+                        clientName: clientName,
                         messageText: message,
                         messageType: 'text',
                         direction: 'outgoing',
